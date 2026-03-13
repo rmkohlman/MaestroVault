@@ -4,6 +4,7 @@
 package vault
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/rmkohlman/MaestroVault/internal/crypto"
 	"github.com/rmkohlman/MaestroVault/internal/keychain"
 	"github.com/rmkohlman/MaestroVault/internal/store"
+	"github.com/rmkohlman/MaestroVault/internal/touchid"
 )
 
 const (
@@ -82,9 +84,22 @@ func Init() error {
 }
 
 // Open opens an existing vault for use.
+// If TouchID is enabled in the config, the user is prompted for biometric
+// authentication before the vault is unlocked.
 func Open() (*Vault, error) {
 	if !keychain.MasterKeyExists() {
-		return nil, fmt.Errorf("vault not initialized (run 'maestro init' first)")
+		return nil, fmt.Errorf("vault not initialized (run 'maestrovault init' first)")
+	}
+
+	// Check TouchID requirement.
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	if cfg.TouchID {
+		if err := touchid.Authenticate("MaestroVault wants to access your secrets"); err != nil {
+			return nil, fmt.Errorf("authentication required: %w", err)
+		}
 	}
 
 	dbPath := DBPath()
@@ -99,6 +114,11 @@ func Open() (*Vault, error) {
 // Close closes the vault and releases database resources.
 func (v *Vault) Close() error {
 	return v.store.Close()
+}
+
+// DB returns the underlying database handle for sharing with the API server.
+func (v *Vault) DB() *sql.DB {
+	return v.store.DB()
 }
 
 // Set encrypts and stores a secret using envelope encryption.

@@ -17,6 +17,13 @@
 //	maestrovault import <file>         Import secrets from file
 //	maestrovault destroy               Destroy the vault completely
 //	maestrovault tui                   Launch interactive TUI
+//	maestrovault serve                 Start the REST API server
+//	maestrovault token create          Create an API token
+//	maestrovault token list            List API tokens
+//	maestrovault token revoke          Revoke an API token
+//	maestrovault touchid enable        Enable TouchID authentication
+//	maestrovault touchid disable       Disable TouchID authentication
+//	maestrovault touchid status        Show TouchID status
 package main
 
 import (
@@ -31,8 +38,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/rmkohlman/MaestroVault/internal/api"
 	"github.com/rmkohlman/MaestroVault/internal/clipboard"
 	"github.com/rmkohlman/MaestroVault/internal/crypto"
+	"github.com/rmkohlman/MaestroVault/internal/touchid"
 	"github.com/rmkohlman/MaestroVault/internal/tui"
 	"github.com/rmkohlman/MaestroVault/internal/vault"
 	"github.com/spf13/cobra"
@@ -92,6 +101,9 @@ The master key is stored securely in the macOS Keychain.`,
 		newImportCmd(),
 		newDestroyCmd(),
 		newTUICmd(),
+		newServeCmd(),
+		newTokenCmd(),
+		newTouchIDCmd(),
 	)
 
 	return root
@@ -922,6 +934,468 @@ Use --vim for Normal/Visual/Insert modes with full vim motions.`,
 
 	cmd.Flags().BoolVar(&vimMode, "vim", false, "Enable vim modes (Normal/Visual/Insert) with mode indicator")
 	return cmd
+}
+
+// ── serve command ─────────────────────────────────────────────
+
+func newServeCmd() *cobra.Command {
+	var socketPath string
+
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the REST API server on a Unix socket",
+		Long: `Starts the MaestroVault REST API server, listening on a Unix domain socket.
+
+The server provides a full CRUD REST API for secrets management, scoped token
+authentication, password generation, and vault info. All requests (except
+health checks) require a valid Bearer token.
+
+Default socket: ~/.maestrovault/maestrovault.sock
+
+Use 'maestrovault token create' to generate API tokens before starting.`,
+		Example: `  maestrovault serve
+  maestrovault serve --socket /tmp/maestrovault.sock`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			v, err := vault.Open()
+			if err != nil {
+				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
+				return err
+			}
+			defer v.Close()
+
+			srv, err := api.NewServer(v, api.ServerOpts{
+				SocketPath: socketPath,
+				DB:         v.DB(),
+			})
+			if err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			printSuccess(fmt.Sprintf("Starting API server on %s", srv.SocketPath()))
+			fmt.Printf("  %s\n", colorize("Press Ctrl+C to stop", ansiDim))
+
+			if err := srv.Start(); err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&socketPath, "socket", "", "Custom Unix socket path (default: ~/.maestrovault/maestrovault.sock)")
+	return cmd
+}
+
+// ── token command group ───────────────────────────────────────
+
+func newTokenCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "token",
+		Short: "Manage API tokens",
+		Long: `Create, list, and revoke API tokens for the REST API server.
+
+Tokens use scoped permissions:
+  read      — get, list, search, info
+  write     — set, edit, delete, import
+  generate  — generate passwords
+  admin     — token management (implicitly grants all other scopes)
+
+Tokens are stored as SHA-256 hashes. The plaintext token is shown only once
+at creation time — save it somewhere safe.`,
+	}
+
+	cmd.AddCommand(
+		newTokenCreateCmd(),
+		newTokenListCmd(),
+		newTokenRevokeCmd(),
+	)
+
+	return cmd
+}
+
+func newTokenCreateCmd() *cobra.Command {
+	var (
+		name    string
+		scopes  []string
+		expires string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new API token",
+		Example: `  maestrovault token create --name "ci-read" --scope read
+  maestrovault token create --name "deploy" --scope read,write --expires 24h
+  maestrovault token create --name "admin" --scope admin`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if name == "" {
+				return fmt.Errorf("--name is required")
+			}
+			if len(scopes) == 0 {
+				return fmt.Errorf("--scope is required (read, write, generate, admin)")
+			}
+
+			// Validate scopes.
+			parsedScopes := make([]api.Scope, 0, len(scopes))
+			for _, raw := range scopes {
+				// Support comma-separated: --scope read,write
+				for _, s := range strings.Split(raw, ",") {
+					s = strings.TrimSpace(s)
+					if !api.ValidScope(s) {
+						return fmt.Errorf("invalid scope: %q (valid: read, write, generate, admin)", s)
+					}
+					parsedScopes = append(parsedScopes, api.Scope(s))
+				}
+			}
+
+			v, err := vault.Open()
+			if err != nil {
+				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
+				return err
+			}
+			defer v.Close()
+
+			ts := api.NewTokenStore(v.DB())
+
+			var expiresAt *time.Time
+			if expires != "" && expires != "0" {
+				d, err := time.ParseDuration(expires)
+				if err != nil {
+					return fmt.Errorf("invalid --expires duration: %w", err)
+				}
+				t := time.Now().Add(d)
+				expiresAt = &t
+			}
+
+			plaintext, tok, err := ts.Create(name, parsedScopes, expiresAt)
+			if err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			if resolveFormat(outputFormat) == "json" {
+				out := map[string]interface{}{
+					"token":      plaintext,
+					"id":         tok.ID,
+					"name":       tok.Name,
+					"scopes":     tok.Scopes,
+					"created_at": tok.CreatedAt,
+				}
+				if tok.ExpiresAt != nil {
+					out["expires_at"] = tok.ExpiresAt
+				}
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(out)
+			}
+
+			printSuccess("Token created successfully")
+			fmt.Println()
+			fmt.Printf("  %s  %s\n", colorize("Token:", ansiBold), plaintext)
+			fmt.Printf("  %s     %s\n", colorize("ID:", ansiBold), tok.ID)
+			fmt.Printf("  %s   %s\n", colorize("Name:", ansiBold), tok.Name)
+			scopeStrs := make([]string, len(tok.Scopes))
+			for i, s := range tok.Scopes {
+				scopeStrs[i] = string(s)
+			}
+			fmt.Printf("  %s %s\n", colorize("Scopes:", ansiBold), strings.Join(scopeStrs, ", "))
+			if tok.ExpiresAt != nil {
+				fmt.Printf("  %s %s\n", colorize("Expires:", ansiBold), tok.ExpiresAt.Format(time.RFC3339))
+			} else {
+				fmt.Printf("  %s %s\n", colorize("Expires:", ansiBold), "never")
+			}
+			fmt.Println()
+			printWarning("Save this token now — it cannot be retrieved again.")
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "Token name (required)")
+	cmd.Flags().StringSliceVar(&scopes, "scope", nil, "Token scopes: read, write, generate, admin (required)")
+	cmd.Flags().StringVar(&expires, "expires", "", "Token expiry duration (e.g. 24h, 720h); omit for no expiry")
+	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("scope")
+
+	return cmd
+}
+
+func newTokenListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "list",
+		Short:   "List all API tokens",
+		Aliases: []string{"ls"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			v, err := vault.Open()
+			if err != nil {
+				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
+				return err
+			}
+			defer v.Close()
+
+			ts := api.NewTokenStore(v.DB())
+			tokens, err := ts.List()
+			if err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			if len(tokens) == 0 {
+				fmt.Printf("  %s\n", colorize("No API tokens found. Create one with 'maestrovault token create'.", ansiDim))
+				return nil
+			}
+
+			if resolveFormat(outputFormat) == "json" {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(tokens)
+			}
+
+			// Table output.
+			fmt.Printf("  %-18s %-20s %-30s %-22s %s\n",
+				colorize("ID", ansiBold),
+				colorize("NAME", ansiBold),
+				colorize("SCOPES", ansiBold),
+				colorize("CREATED", ansiBold),
+				colorize("EXPIRES", ansiBold),
+			)
+			for _, tok := range tokens {
+				scopeStrs := make([]string, len(tok.Scopes))
+				for i, s := range tok.Scopes {
+					scopeStrs[i] = string(s)
+				}
+				expires := "-"
+				if tok.ExpiresAt != nil {
+					if time.Now().After(*tok.ExpiresAt) {
+						expires = colorize("expired", ansiRed)
+					} else {
+						expires = tok.ExpiresAt.Format("2006-01-02 15:04")
+					}
+				}
+				fmt.Printf("  %-18s %-20s %-30s %-22s %s\n",
+					tok.ID,
+					tok.Name,
+					strings.Join(scopeStrs, ", "),
+					tok.CreatedAt.Format("2006-01-02 15:04"),
+					expires,
+				)
+			}
+			fmt.Printf("\n  %s\n", colorize(fmt.Sprintf("%d token(s)", len(tokens)), ansiDim))
+
+			return nil
+		},
+	}
+}
+
+func newTokenRevokeCmd() *cobra.Command {
+	var all bool
+
+	cmd := &cobra.Command{
+		Use:   "revoke [id]",
+		Short: "Revoke an API token by ID",
+		Long: `Revoke (delete) an API token by its ID, or use --all to revoke every token.
+
+The token is permanently deleted and can no longer be used to authenticate.`,
+		Example: `  maestrovault token revoke abc123
+  maestrovault token revoke --all`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !all && len(args) == 0 {
+				return fmt.Errorf("provide a token ID or use --all")
+			}
+
+			v, err := vault.Open()
+			if err != nil {
+				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
+				return err
+			}
+			defer v.Close()
+
+			ts := api.NewTokenStore(v.DB())
+
+			if all {
+				n, err := ts.RevokeAll()
+				if err != nil {
+					printError(err.Error(), "")
+					return err
+				}
+				printSuccess(fmt.Sprintf("Revoked %d token(s)", n))
+				return nil
+			}
+
+			id := args[0]
+			if err := ts.Revoke(id); err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+			printSuccess(fmt.Sprintf("Token %s revoked", id))
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&all, "all", false, "Revoke all tokens")
+	return cmd
+}
+
+// ── touchid command group ─────────────────────────────────────
+
+func newTouchIDCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "touchid",
+		Short: "Manage TouchID biometric authentication",
+		Long: `Enable, disable, or check the status of TouchID integration.
+
+When enabled, MaestroVault requires biometric authentication via TouchID
+each time the vault is opened. This adds a hardware-backed security layer
+on top of the macOS Keychain.
+
+TouchID must be available on your Mac (Touch ID sensor or Apple Watch).`,
+	}
+
+	cmd.AddCommand(
+		newTouchIDEnableCmd(),
+		newTouchIDDisableCmd(),
+		newTouchIDStatusCmd(),
+	)
+
+	return cmd
+}
+
+func newTouchIDEnableCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "enable",
+		Short: "Enable TouchID for vault access",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Check if TouchID hardware is available.
+			available, err := touchid.Available()
+			if !available {
+				msg := "TouchID is not available on this device"
+				if err != nil {
+					msg = err.Error()
+				}
+				printError(msg, "TouchID requires a Mac with Touch ID sensor or paired Apple Watch.")
+				return fmt.Errorf("%s", msg)
+			}
+
+			// Verify it works by doing a test authentication.
+			if err := touchid.Authenticate("MaestroVault is verifying TouchID works"); err != nil {
+				printError("TouchID verification failed", err.Error())
+				return err
+			}
+
+			cfg, err := vault.LoadConfig()
+			if err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			if cfg.TouchID {
+				printSuccess("TouchID is already enabled")
+				return nil
+			}
+
+			cfg.TouchID = true
+			if err := vault.SaveConfig(cfg); err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			printSuccess("TouchID enabled — biometric authentication is now required to open the vault")
+			return nil
+		},
+	}
+}
+
+func newTouchIDDisableCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "disable",
+		Short: "Disable TouchID for vault access",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// If TouchID is currently enabled, require auth to disable it.
+			cfg, err := vault.LoadConfig()
+			if err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			if !cfg.TouchID {
+				printSuccess("TouchID is already disabled")
+				return nil
+			}
+
+			// Require TouchID to disable it (prevent unauthorized disabling).
+			available, _ := touchid.Available()
+			if available {
+				if err := touchid.Authenticate("MaestroVault wants to disable TouchID"); err != nil {
+					printError("Authentication required to disable TouchID", err.Error())
+					return err
+				}
+			}
+
+			cfg.TouchID = false
+			if err := vault.SaveConfig(cfg); err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			printSuccess("TouchID disabled — vault will open without biometric authentication")
+			return nil
+		},
+	}
+}
+
+func newTouchIDStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show TouchID configuration and hardware status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := vault.LoadConfig()
+			if err != nil {
+				printError(err.Error(), "")
+				return err
+			}
+
+			available, availErr := touchid.Available()
+
+			if resolveFormat(outputFormat) == "json" {
+				out := map[string]interface{}{
+					"enabled":   cfg.TouchID,
+					"available": available,
+				}
+				if availErr != nil {
+					out["error"] = availErr.Error()
+				}
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(out)
+			}
+
+			fmt.Println()
+			enabledStr := colorize("disabled", ansiYellow)
+			if cfg.TouchID {
+				enabledStr = colorize("enabled", ansiGreen)
+			}
+			fmt.Printf("  %s  %s\n", colorize("TouchID:", ansiBold), enabledStr)
+
+			availStr := colorize("not available", ansiRed)
+			if available {
+				availStr = colorize("available", ansiGreen)
+			}
+			fmt.Printf("  %s %s\n", colorize("Hardware:", ansiBold), availStr)
+
+			if availErr != nil && !available {
+				fmt.Printf("  %s   %s\n", colorize("Detail:", ansiBold), colorize(availErr.Error(), ansiDim))
+			}
+			fmt.Println()
+
+			if cfg.TouchID && !available {
+				printWarning("TouchID is enabled but hardware is not available — vault access will fail!")
+			}
+
+			return nil
+		},
+	}
 }
 
 // --- Helpers ---

@@ -35,3 +35,12 @@ Thumbs.db
 
 # Vault directory
 .maestrovault/
+
+# Python venv (MkDocs)
+.venv/
+
+# GoReleaser dist
+dist/
+
+# MkDocs build output
+site/

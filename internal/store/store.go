@@ -173,6 +173,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB returns the underlying database handle for sharing with other components.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // Search returns secrets whose name or label values match the query string.
 // Uses case-insensitive LIKE matching.
 func (s *Store) Search(query string) ([]Secret, error) {
