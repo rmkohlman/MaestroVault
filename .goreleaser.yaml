@@ -1,0 +1,60 @@
+version: 2
+
+project_name: maestrovault
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: maestro
+    main: ./cmd/maestro
+    binary: maestrovault
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+universal_binaries:
+  - id: maestro
+    replace: true
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+brews:
+  - name: maestrovault
+    repository:
+      owner: rmkohlman
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/rmkohlman/MaestroVault"
+    description: "A macOS-first, developer-focused secrets management tool with CLI, TUI, and vim motions"
+    license: "Apache-2.0"
+    install: |
+      bin.install "maestrovault"
+    test: |
+      system "#{bin}/maestrovault", "version"
