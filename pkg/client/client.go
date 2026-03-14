@@ -236,7 +236,7 @@ func (c *Client) Delete(name, env string) error {
 // Search returns secrets matching the query string.
 func (c *Client) Search(query string) ([]SecretEntry, error) {
 	var entries []SecretEntry
-	if err := c.doJSON("GET", "/v1/search?q="+query, nil, &entries); err != nil {
+	if err := c.doJSON("GET", "/v1/search?q="+url.QueryEscape(query), nil, &entries); err != nil {
 		return nil, err
 	}
 	return entries, nil

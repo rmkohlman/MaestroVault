@@ -72,6 +72,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toastKind = "success"
 		return m, clearToastAfter(3 * time.Second)
 
+	case editDetailMsg:
+		e := msg.entry
+		m.mode = ModeInsert
+		m.screen = screenSetName
+		m.editing = true
+		m.editName = e.Name
+		m.editEnv = e.Environment
+		m.nameInput.SetValue(e.Name)
+		m.envInput.SetValue(e.Environment)
+		m.valueInput.SetValue(e.Value)
+		m.metadataInput.SetValue(formatMetadataPlain(e.Metadata))
+		m.nameInput.Focus()
+		return m, textinput.Blink
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -105,6 +119,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.showGenerator && m.gen.cursor == genOptName {
 		var cmd tea.Cmd
 		m.gen.nameInput, cmd = m.gen.nameInput.Update(msg)
+		return m, cmd
+	}
+	if m.showGenerator && m.gen.cursor == genOptEnv {
+		var cmd tea.Cmd
+		m.gen.envInput, cmd = m.gen.envInput.Update(msg)
 		return m, cmd
 	}
 
@@ -229,17 +248,7 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 	// Edit current.
 	case "e":
 		if s := m.currentSecret(); s != nil {
-			m.mode = ModeInsert
-			m.screen = screenSetName
-			m.editing = true
-			m.editName = s.Name
-			m.editEnv = s.Environment
-			m.nameInput.SetValue(s.Name)
-			m.envInput.SetValue(s.Environment)
-			m.valueInput.SetValue("")
-			m.metadataInput.SetValue(formatMetadataPlain(s.Metadata))
-			m.nameInput.Focus()
-			return m, textinput.Blink
+			return m, fetchForEdit(m.vault, s.Name, s.Environment)
 		}
 
 	// Visual mode.
@@ -276,11 +285,6 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 		m.rebuildDisplay()
 		m.clampCursor()
 		m.adjustScroll()
-
-	// Generator.
-	case "g ": // fallthrough if pendingKey "g" followed by non-"g" handled elsewhere
-		// Not used here, "g" is handled via pendingKey.
-	case "G ": // Not used.
 
 	// Open generator overlay.
 	case "n":
@@ -347,17 +351,7 @@ func (m Model) handleNormalDetail(msg tea.KeyMsg, key string) (tea.Model, tea.Cm
 		}
 	case "e":
 		if s := m.currentSecret(); s != nil {
-			m.mode = ModeInsert
-			m.screen = screenSetName
-			m.editing = true
-			m.editName = s.Name
-			m.editEnv = s.Environment
-			m.nameInput.SetValue(s.Name)
-			m.envInput.SetValue(s.Environment)
-			m.valueInput.SetValue("")
-			m.metadataInput.SetValue(formatMetadataPlain(s.Metadata))
-			m.nameInput.Focus()
-			return m, textinput.Blink
+			return m, fetchForEdit(m.vault, s.Name, s.Environment)
 		}
 	case "d":
 		if s := m.currentSecret(); s != nil {
@@ -580,16 +574,30 @@ func (m Model) handleGeneratorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.gen.cursor = (m.gen.cursor + 1) % genOptCount
 		if m.gen.cursor == genOptName {
 			m.gen.nameInput.Focus()
+			m.gen.envInput.Blur()
+			return m, textinput.Blink
+		}
+		if m.gen.cursor == genOptEnv {
+			m.gen.envInput.Focus()
+			m.gen.nameInput.Blur()
 			return m, textinput.Blink
 		}
 		m.gen.nameInput.Blur()
+		m.gen.envInput.Blur()
 	case "k", "up":
 		m.gen.cursor = (m.gen.cursor - 1 + genOptCount) % genOptCount
 		if m.gen.cursor == genOptName {
 			m.gen.nameInput.Focus()
+			m.gen.envInput.Blur()
+			return m, textinput.Blink
+		}
+		if m.gen.cursor == genOptEnv {
+			m.gen.envInput.Focus()
+			m.gen.nameInput.Blur()
 			return m, textinput.Blink
 		}
 		m.gen.nameInput.Blur()
+		m.gen.envInput.Blur()
 	case "h", "left":
 		if m.gen.cursor == genOptLength && m.gen.length > 8 {
 			m.gen.length--
@@ -631,8 +639,9 @@ func (m Model) handleGeneratorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		name := m.gen.nameInput.Value()
 		if name != "" {
 			value := m.gen.preview
+			env := m.gen.envInput.Value()
 			m.showGenerator = false
-			return m, setSecret(m.vault, name, "", value, nil)
+			return m, setSecret(m.vault, name, env, value, nil)
 		}
 		// No name: just close.
 		m.showGenerator = false
@@ -641,6 +650,12 @@ func (m Model) handleGeneratorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.gen.cursor == genOptName {
 			var cmd tea.Cmd
 			m.gen.nameInput, cmd = m.gen.nameInput.Update(msg)
+			return m, cmd
+		}
+		// Forward to env input when it's focused.
+		if m.gen.cursor == genOptEnv {
+			var cmd tea.Cmd
+			m.gen.envInput, cmd = m.gen.envInput.Update(msg)
 			return m, cmd
 		}
 	}
@@ -697,16 +712,7 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		case "e":
 			if s := m.currentSecret(); s != nil {
-				m.screen = screenSetName
-				m.editing = true
-				m.editName = s.Name
-				m.editEnv = s.Environment
-				m.nameInput.SetValue(s.Name)
-				m.envInput.SetValue(s.Environment)
-				m.valueInput.SetValue("")
-				m.metadataInput.SetValue(formatMetadataPlain(s.Metadata))
-				m.nameInput.Focus()
-				return m, textinput.Blink
+				return m, fetchForEdit(m.vault, s.Name, s.Environment)
 			}
 		case "d":
 			if s := m.currentSecret(); s != nil {
@@ -752,16 +758,7 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "e":
 			if s := m.currentSecret(); s != nil {
-				m.screen = screenSetName
-				m.editing = true
-				m.editName = s.Name
-				m.editEnv = s.Environment
-				m.nameInput.SetValue(s.Name)
-				m.envInput.SetValue(s.Environment)
-				m.valueInput.SetValue("")
-				m.metadataInput.SetValue(formatMetadataPlain(s.Metadata))
-				m.nameInput.Focus()
-				return m, textinput.Blink
+				return m, fetchForEdit(m.vault, s.Name, s.Environment)
 			}
 		case "d":
 			if s := m.currentSecret(); s != nil {

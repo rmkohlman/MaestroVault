@@ -301,7 +301,7 @@ func newSetCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "Secret value (reads from stdin if omitted)")
+	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "Secret value (visible in process list; omit for interactive prompt)")
 	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "Metadata as key=value (repeatable)")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	cmd.Flags().BoolVarP(&generatePw, "generate", "g", false, "Auto-generate a random password as the value")
@@ -339,7 +339,7 @@ func newGetCmd() *cobra.Command {
 						return fmt.Errorf("clipboard: %w", err)
 					}
 					_ = cancel
-					printSuccess(fmt.Sprintf("Copied %q to clipboard. Auto-clears in 45s.", entry.Name))
+					printSuccess(fmt.Sprintf("Copied %q to clipboard.", entry.Name))
 					return nil
 				}
 
@@ -518,6 +518,23 @@ func newEditCmd() *cobra.Command {
 					}
 				}
 
+				// If neither --value nor --metadata provided and stdin is
+				// a terminal, prompt interactively for the new value.
+				if newValue == nil && newMetadata == nil && term.IsTerminal(int(os.Stdin.Fd())) {
+					fmt.Fprint(os.Stderr, "Enter new secret value: ")
+					raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+					fmt.Fprintln(os.Stderr) // newline after masked input
+					if err != nil {
+						return fmt.Errorf("reading input: %w", err)
+					}
+					val := string(raw)
+					if val == "" {
+						printError("Secret value cannot be empty.", "Use --value or --metadata to update specific fields.")
+						return fmt.Errorf("empty value")
+					}
+					newValue = &val
+				}
+
 				if err := v.Edit(ctx, name, env, newValue, newMetadata); err != nil {
 					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
@@ -529,7 +546,7 @@ func newEditCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "New secret value (keeps existing if omitted)")
+	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "New secret value (visible in process list; omit for interactive prompt)")
 	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "New metadata as key=value (replaces all metadata)")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
@@ -570,7 +587,6 @@ func newCopyCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&clearAfter, "clear", 45, "Seconds before clipboard is auto-cleared (0 to disable)")
-	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
@@ -843,7 +859,6 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&format, "format", "json", "Export format: json, env")
-	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
@@ -922,7 +937,6 @@ Examples:
 
 	cmd.Flags().StringVar(&format, "format", "json", "Import format: json, env")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation prompt")
-	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
@@ -969,9 +983,17 @@ func newTUICmd() *cobra.Command {
 		Short: "Launch interactive terminal UI",
 		Long: `Opens a full-screen interactive interface for managing secrets.
 Colors automatically adapt to your terminal theme.
-Use --vim for Normal/Visual/Insert modes with full vim motions.`,
+Use --vim for Normal/Visual/Insert modes with full vim motions.
+Set "vim_mode": true in ~/.maestrovault/config.json to enable by default.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
+				// If --vim was not explicitly set, fall back to config.
+				if !cmd.Flags().Changed("vim") {
+					cfg, err := vault.LoadConfig()
+					if err == nil && cfg.VimMode {
+						vimMode = true
+					}
+				}
 				opts := tui.Opts{VimMode: vimMode}
 				p := tea.NewProgram(tui.New(v, opts), tea.WithAltScreen())
 				if _, err := p.Run(); err != nil {
@@ -1025,6 +1047,7 @@ Use 'mav token create' to generate API tokens before starting.`,
 				printError(err.Error(), "Run 'mav init' to create a new vault.")
 				return err
 			}
+			defer v.Close()
 
 			srv, err := api.NewServer(v, api.ServerOpts{
 				SocketPath: socketPath,
@@ -1117,7 +1140,7 @@ func newTokenCreateCmd() *cobra.Command {
 
 				var expiresAt *time.Time
 				if expires != "" && expires != "0" {
-					d, err := time.ParseDuration(expires)
+					d, err := api.ParseDuration(expires)
 					if err != nil {
 						return fmt.Errorf("invalid --expires duration: %w", err)
 					}
@@ -1483,6 +1506,9 @@ func formatMetadata(m map[string]any) string {
 
 // toEnvName converts a secret name to an environment variable name:
 // uppercase, dashes/dots/spaces to underscores.
+// WARNING: This conversion is lossy — different secret names can map to the
+// same env var (e.g. "my-key" and "my.key" both become "MY_KEY"). Round-trip
+// import/export via env format may lose the original naming.
 func toEnvName(name string) string {
 	r := strings.NewReplacer("-", "_", ".", "_", " ", "_", "/", "_")
 	return strings.ToUpper(r.Replace(name))

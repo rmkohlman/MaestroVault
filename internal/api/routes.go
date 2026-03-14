@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rmkohlman/MaestroVault/internal/crypto"
@@ -109,7 +111,7 @@ func (s *Server) handleSetSecret(w http.ResponseWriter, r *http.Request) {
 	env := r.URL.Query().Get("env")
 
 	var req setSecretRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -146,7 +148,7 @@ func (s *Server) handleEditSecret(w http.ResponseWriter, r *http.Request) {
 	env := r.URL.Query().Get("env")
 
 	var req editSecretRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -225,7 +227,7 @@ type generateResponse struct {
 // POST /v1/generate
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	var req generateRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -261,6 +263,46 @@ func boolDefault(b *bool, def bool) bool {
 	return *b
 }
 
+// ParseDuration extends time.ParseDuration with support for day ("d") and
+// week ("w") units. For example, "30d" = 720h, "2w" = 336h. Negative
+// durations are rejected. The function is exported so the CLI can reuse it.
+func ParseDuration(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+	if s[0] == '-' {
+		return 0, fmt.Errorf("negative duration not allowed: %q", s)
+	}
+
+	// Check for "d" or "w" suffix and convert to hours.
+	if strings.HasSuffix(s, "d") {
+		numStr := strings.TrimSuffix(s, "d")
+		var days int
+		if _, err := fmt.Sscanf(numStr, "%d", &days); err != nil || days < 0 {
+			return 0, fmt.Errorf("invalid duration: %q", s)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	if strings.HasSuffix(s, "w") {
+		numStr := strings.TrimSuffix(s, "w")
+		var weeks int
+		if _, err := fmt.Sscanf(numStr, "%d", &weeks); err != nil || weeks < 0 {
+			return 0, fmt.Errorf("invalid duration: %q", s)
+		}
+		return time.Duration(weeks) * 7 * 24 * time.Hour, nil
+	}
+
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, err
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("negative duration not allowed: %q", s)
+	}
+	return d, nil
+}
+
 // ── Vault info ────────────────────────────────────────────────
 
 // GET /v1/info
@@ -293,7 +335,7 @@ type createTokenResponse struct {
 // POST /v1/tokens
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	var req createTokenRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -318,7 +360,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 
 	var expiresAt *time.Time
 	if req.ExpiresIn != "" && req.ExpiresIn != "0" {
-		d, err := time.ParseDuration(req.ExpiresIn)
+		d, err := ParseDuration(req.ExpiresIn)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid expires_in: "+err.Error())
 			return

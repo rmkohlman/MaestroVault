@@ -81,7 +81,9 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func decodeJSON(r *http.Request, v interface{}) error {
+func decodeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	// Limit request body to 1 MB to prevent abuse.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	defer r.Body.Close()
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()

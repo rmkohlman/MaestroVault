@@ -215,7 +215,7 @@ var wordList = []string{
 	"unit", "unto", "upon", "urge", "used", "user", "uses", "vale", "vary", "vast",
 	"verb", "very", "vice", "view", "vine", "visa", "void", "volt", "vote", "wade",
 	"wage", "wait", "wake", "walk", "wall", "want", "ward", "warm", "warn", "wash",
-	"vast", "wave", "ways", "weak", "wear", "weed", "week", "well", "went", "were",
+	"wave", "ways", "weak", "wear", "weed", "week", "well", "went", "were",
 	"west", "what", "when", "whom", "wide", "wife", "wild", "will", "wind", "wine",
 	"wing", "wire", "wise", "wish", "with", "woke", "wolf", "wood", "word", "wore",
 	"work", "worm", "worn", "wrap", "yard", "yarn", "yeah", "year", "yell", "zero",

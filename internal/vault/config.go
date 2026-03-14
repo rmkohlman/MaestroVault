@@ -13,6 +13,8 @@ const configFileName = "config.json"
 type Config struct {
 	// TouchID enables biometric authentication when opening the vault.
 	TouchID bool `json:"touchid"`
+	// VimMode enables vim keybindings (Normal/Visual/Insert) in the TUI.
+	VimMode bool `json:"vim_mode"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.

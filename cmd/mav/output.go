@@ -41,10 +41,6 @@ func colorize(s, color string) string {
 	return color + s + ansiReset
 }
 
-func bold(s string) string {
-	return colorize(s, ansiBold)
-}
-
 // printError prints a colored error with an optional hint.
 func printError(msg string, hint string) {
 	prefix := colorize("Error:", ansiRed+ansiBold)

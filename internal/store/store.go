@@ -346,6 +346,11 @@ func (s *SQLiteStore) ListByMetadata(ctx context.Context, key, value string) ([]
 	var rows *sql.Rows
 	var err error
 
+	// Note: The key is passed as a parameterized value via '$.' || ?, so
+	// SQLite treats it as a literal string — there is no SQL injection risk.
+	// However, keys containing JSON path special characters (e.g. dots,
+	// brackets) may produce unexpected json_extract results. This is an
+	// accepted edge case for the metadata key naming convention.
 	if value == "" {
 		// Match any secret that has the key (json_extract returns non-null).
 		const q = `

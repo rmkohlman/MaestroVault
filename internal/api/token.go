@@ -124,6 +124,11 @@ func (ts *TokenStore) Create(name string, scopes []Scope, expiresAt *time.Time) 
 // Validate checks a plaintext token against all tokens in the database.
 // It supports both legacy (no salt, plain SHA-256) and new (HMAC-SHA256
 // with salt) tokens. Returns the token record if valid.
+//
+// Note: This is an O(n) full table scan because tokens are stored as
+// salted hashes — we cannot look up by hash directly when each row has
+// a unique salt. For typical usage (tens of tokens, not thousands) this
+// is perfectly acceptable and avoids the complexity of a separate index.
 func (ts *TokenStore) Validate(plaintext string) (*Token, error) {
 	rows, err := ts.db.Query(`
 		SELECT id, name, token_hash, salt, scopes, created_at, expires_at, last_used_at
@@ -191,6 +196,9 @@ func (ts *TokenStore) Validate(plaintext string) (*Token, error) {
 		return nil, fmt.Errorf("iterating tokens: %w", err)
 	}
 
+	// No matching token found. Intentionally returns a generic error
+	// rather than distinguishing "no match" from "expired" or "malformed"
+	// to avoid leaking information about which tokens exist.
 	return nil, fmt.Errorf("invalid token")
 }
 

@@ -89,8 +89,9 @@ type genState struct {
 	digits    bool
 	symbols   bool
 	preview   string
-	cursor    int // 0=length, 1=upper, 2=lower, 3=digits, 4=symbols, 5=name
+	cursor    int // 0=length, 1=upper, 2=lower, 3=digits, 4=symbols, 5=name, 6=env
 	nameInput textinput.Model
+	envInput  textinput.Model
 }
 
 const (
@@ -100,13 +101,18 @@ const (
 	genOptDigits    = 3
 	genOptSymbols   = 4
 	genOptName      = 5
-	genOptCount     = 6
+	genOptEnv       = 6
+	genOptCount     = 7
 )
 
 func newGenState() genState {
 	ni := textinput.New()
 	ni.Placeholder = "secret name (optional, to save)"
 	ni.CharLimit = 128
+
+	ei := textinput.New()
+	ei.Placeholder = "environment (optional)"
+	ei.CharLimit = 128
 
 	g := genState{
 		length:    32,
@@ -116,6 +122,7 @@ func newGenState() genState {
 		symbols:   true,
 		cursor:    0,
 		nameInput: ni,
+		envInput:  ei,
 	}
 	g.regenerate()
 	return g
@@ -273,6 +280,7 @@ type toastMsg struct {
 type toastClearMsg struct{}
 type vaultInfoMsg struct{ info *vault.VaultInfo }
 type clipboardMsg struct{ name string }
+type editDetailMsg struct{ entry *vault.SecretEntry }
 
 // ── Commands ──────────────────────────────────────────────────
 
@@ -293,6 +301,16 @@ func getSecret(v vault.Vault, name, env string) tea.Cmd {
 			return errMsg{err}
 		}
 		return secretDetailMsg{entry}
+	}
+}
+
+func fetchForEdit(v vault.Vault, name, env string) tea.Cmd {
+	return func() tea.Msg {
+		entry, err := v.Get(context.Background(), name, env)
+		if err != nil {
+			return errMsg{err}
+		}
+		return editDetailMsg{entry}
 	}
 }
 

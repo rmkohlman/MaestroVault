@@ -39,11 +39,6 @@ func (m Model) View() string {
 		s = m.viewListScreen()
 	}
 
-	// Append toast if active.
-	if m.toast != "" {
-		s += "\n" + m.renderToast()
-	}
-
 	return s
 }
 
@@ -157,6 +152,12 @@ func (m Model) viewListScreen() string {
 	b.WriteString(m.renderStatusBar())
 	b.WriteString("\n")
 
+	// Toast (above help bar so it never pushes help off-screen).
+	if t := m.renderToast(); t != "" {
+		b.WriteString(t)
+		b.WriteString("\n")
+	}
+
 	// Help bar.
 	if m.vimEnabled {
 		b.WriteString(m.vimHelpBar())
@@ -236,6 +237,12 @@ func (m Model) viewDetailScreen() string {
 	b.WriteString("\n")
 	b.WriteString(dividerLine(w))
 	b.WriteString("\n")
+
+	// Toast (above help bar so it never pushes help off-screen).
+	if t := m.renderToast(); t != "" {
+		b.WriteString(t)
+		b.WriteString("\n")
+	}
 
 	// Help bar.
 	if m.vimEnabled {
@@ -331,6 +338,12 @@ func (m Model) viewSetScreen() string {
 	b.WriteString(dividerLine(w))
 	b.WriteString("\n")
 
+	// Toast (above help bar so it never pushes help off-screen).
+	if t := m.renderToast(); t != "" {
+		b.WriteString(t)
+		b.WriteString("\n")
+	}
+
 	if m.vimEnabled {
 		if m.screen == screenSetValue {
 			b.WriteString(m.helpBar("↵", "next/save", "ctrl+r", "peek", "esc", "cancel"))
@@ -377,6 +390,12 @@ func (m Model) viewConfirmDeleteScreen() string {
 
 	b.WriteString("  " + WarningStyle.Render("This action cannot be undone."))
 	b.WriteString("\n\n")
+
+	// Toast (above help bar so it never pushes help off-screen).
+	if t := m.renderToast(); t != "" {
+		b.WriteString(t)
+		b.WriteString("\n")
+	}
 
 	b.WriteString(m.helpBar("y/↵", "confirm", "n/esc", "cancel"))
 
@@ -520,6 +539,16 @@ func (m Model) viewGeneratorOverlay() string {
 		nameLabel = GenActiveStyle
 	}
 	b.WriteString(nameCursor + nameLabel.Render("Save as: ") + m.gen.nameInput.View())
+	b.WriteString("\n")
+
+	// Environment input.
+	envCursor := "  "
+	envLabel := GenLabelStyle
+	if m.gen.cursor == genOptEnv {
+		envCursor = AccentStyle.Render("▸ ")
+		envLabel = GenActiveStyle
+	}
+	b.WriteString(envCursor + envLabel.Render("Env:     ") + m.gen.envInput.View())
 	b.WriteString("\n\n")
 
 	// Hints.

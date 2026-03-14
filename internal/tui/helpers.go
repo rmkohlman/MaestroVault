@@ -37,7 +37,7 @@ func (m Model) vimHelpBar() string {
 				"v", "visual",
 				"/", "search",
 				"s", "sort",
-				"g", "generate",
+				"n", "generate",
 				"?", "help",
 			)
 		case screenDetail:
@@ -167,7 +167,12 @@ func (m Model) visibleRows() int {
 		return 15
 	}
 	// header(3) + search(1) + column headers(1) + footer(3) + padding(2) = 10
-	rows := m.height - 10
+	overhead := 10
+	// When a toast is active, it takes an extra line above the help bar.
+	if m.toast != "" {
+		overhead++
+	}
+	rows := m.height - overhead
 	if rows < 1 {
 		return 1
 	}
@@ -268,16 +273,6 @@ func updateEntry(secrets []vault.SecretEntry, entry *vault.SecretEntry) []vault.
 
 // ── Numeric helpers ───────────────────────────────────────────
 
-func clamp(val, lo, hi int) int {
-	if val < lo {
-		return lo
-	}
-	if val > hi {
-		return hi
-	}
-	return val
-}
-
 func maxVal(a, b int) int {
 	if a > b {
 		return a
@@ -342,46 +337,10 @@ func dividerLine(width int) string {
 func humanSize(b int64) string {
 	switch {
 	case b >= 1<<20:
-		return strings.TrimRight(strings.TrimRight(
-			strings.Replace(
-				strings.Replace(
-					formatFloat(float64(b)/float64(1<<20)), ".", ".", 1,
-				), ",", "", -1,
-			), "0"), ".") + " MB"
+		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", float64(b)/float64(1<<20)), "0"), ".") + " MB"
 	case b >= 1<<10:
-		return strings.TrimRight(strings.TrimRight(
-			formatFloat(float64(b)/float64(1<<10)), "0"), ".") + " KB"
+		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", float64(b)/float64(1<<10)), "0"), ".") + " KB"
 	default:
-		return formatInt(b) + " B"
+		return fmt.Sprintf("%d B", b)
 	}
-}
-
-func formatFloat(f float64) string {
-	return strings.TrimRight(strings.TrimRight(
-		strings.Replace(
-			strings.Replace(
-				formatFloatRaw(f), ".", ".", 1,
-			), ",", "", -1,
-		), "0"), ".")
-}
-
-func formatFloatRaw(f float64) string {
-	s := ""
-	whole := int64(f)
-	frac := int64((f - float64(whole)) * 10)
-	s = formatInt(whole) + "." + formatInt(frac)
-	return s
-}
-
-func formatInt(n int64) string {
-	if n < 0 {
-		return "-" + formatInt(-n)
-	}
-	s := ""
-	for n > 0 || s == "" {
-		digit := n % 10
-		s = string(rune('0'+digit)) + s
-		n /= 10
-	}
-	return s
 }

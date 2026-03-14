@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// clearMu and clearTimer form a global singleton for clipboard auto-clear
+// scheduling. This is intentional: MaestroVault is a single-user tool, so
+// a last-copy-wins model is appropriate. If multiple copies happen before the
+// timer fires, only the latest timer matters (the previous one is cancelled).
 var (
 	clearMu    sync.Mutex
 	clearTimer *time.Timer
