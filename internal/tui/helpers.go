@@ -56,11 +56,6 @@ func (m Model) vimHelpBar() string {
 			"d/x", "delete",
 			"esc", "normal",
 		)
-	case ModeInsert:
-		return m.helpBar(
-			"↵", "next/save",
-			"esc", "cancel",
-		)
 	}
 	return ""
 }

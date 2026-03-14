@@ -14,6 +14,12 @@ func (m Model) View() string {
 		return ""
 	}
 
+	// Secret modal takes priority over all other overlays.
+	if m.showSecretModal {
+		modal := m.secretModal.View()
+		return m.centerOverlay(modal)
+	}
+
 	// Overlays render on top of the current screen.
 	if m.showHelp {
 		return m.viewHelpOverlay()
@@ -34,8 +40,6 @@ func (m Model) View() string {
 		s = m.viewListScreen()
 	case screenDetail:
 		s = m.viewDetailScreen()
-	case screenSetName, screenSetEnv, screenSetValue, screenSetMetadata:
-		s = m.viewSetScreen()
 	case screenConfirmDelete:
 		s = m.viewConfirmDeleteScreen()
 	default:
@@ -273,106 +277,6 @@ func (m Model) viewDetailScreen() string {
 	return b.String()
 }
 
-// ── Set screen (add / edit) ───────────────────────────────────
-
-func (m Model) viewSetScreen() string {
-	var b strings.Builder
-	w := m.width
-	if w <= 0 {
-		w = 80
-	}
-
-	title := "  Add Secret"
-	if m.editing {
-		title = "  Edit Secret"
-	}
-	b.WriteString(TitleStyle.Render(title))
-	b.WriteString("\n")
-	b.WriteString(dividerLine(w))
-	b.WriteString("\n\n")
-
-	// Step indicator.
-	steps := []struct {
-		label  string
-		screen screen
-	}{
-		{"1 Name", screenSetName},
-		{"2 Environment", screenSetEnv},
-		{"3 Value", screenSetValue},
-		{"4 Metadata", screenSetMetadata},
-	}
-	var stepParts []string
-	for _, step := range steps {
-		if m.screen == step.screen {
-			stepParts = append(stepParts, AccentStyle.Render(step.label))
-		} else {
-			stepParts = append(stepParts, MutedStyle.Render(step.label))
-		}
-	}
-	b.WriteString("  " + strings.Join(stepParts, MutedStyle.Render(" → ")) + "\n\n")
-
-	// Name field.
-	nameLabel := MutedStyle.Render("  Name:     ")
-	if m.screen == screenSetName {
-		nameLabel = AccentStyle.Render("▸ Name:     ")
-	}
-	b.WriteString(nameLabel + m.nameInput.View())
-	b.WriteString("\n\n")
-
-	// Environment field.
-	envLabel := MutedStyle.Render("  Env:      ")
-	if m.screen == screenSetEnv {
-		envLabel = AccentStyle.Render("▸ Env:      ")
-	}
-	b.WriteString(envLabel + m.envInput.View())
-	b.WriteString("\n\n")
-
-	// Value field.
-	valueLabel := MutedStyle.Render("  Value:    ")
-	if m.screen == screenSetValue {
-		if m.valueRevealed {
-			valueLabel = AccentStyle.Render("▸ Value:    ") + MutedStyle.Render("(visible) ")
-		} else {
-			valueLabel = AccentStyle.Render("▸ Value:    ")
-		}
-	}
-	b.WriteString(valueLabel + m.valueInput.View())
-	b.WriteString("\n\n")
-
-	// Metadata field.
-	metaLabel := MutedStyle.Render("  Metadata: ")
-	if m.screen == screenSetMetadata {
-		metaLabel = AccentStyle.Render("▸ Metadata: ")
-	}
-	b.WriteString(metaLabel + m.metadataInput.View())
-	b.WriteString("\n\n")
-
-	b.WriteString(dividerLine(w))
-	b.WriteString("\n")
-
-	// Toast (above help bar so it never pushes help off-screen).
-	if t := m.renderToast(); t != "" {
-		b.WriteString(t)
-		b.WriteString("\n")
-	}
-
-	if m.vimEnabled {
-		if m.screen == screenSetValue {
-			b.WriteString(m.helpBar("↵", "next/save", "ctrl+r", "peek", "esc", "cancel"))
-		} else {
-			b.WriteString(m.vimHelpBar())
-		}
-	} else {
-		if m.screen == screenSetValue {
-			b.WriteString(m.helpBar("↵", "next/save", "ctrl+r", "peek", "esc", "cancel"))
-		} else {
-			b.WriteString(m.helpBar("↵", "next/save", "esc", "cancel"))
-		}
-	}
-
-	return b.String()
-}
-
 // ── Confirm delete screen ─────────────────────────────────────
 
 func (m Model) viewConfirmDeleteScreen() string {
@@ -457,9 +361,14 @@ func (m Model) viewHelpOverlay() string {
 		b.WriteString(helpLine("d / x", "Delete selected"))
 		b.WriteString(helpLine("Esc", "Back to normal"))
 		b.WriteString("\n")
-		b.WriteString(AccentStyle.Render(" Insert Mode") + "\n")
-		b.WriteString(helpLine("Enter", "Next field / save"))
-		b.WriteString(helpLine("Esc", "Cancel"))
+		b.WriteString(AccentStyle.Render(" Secret Modal (Add/Edit/View)") + "\n")
+		b.WriteString(helpLine("↑ / ↓ / Tab", "Navigate fields"))
+		b.WriteString(helpLine("Ctrl+R", "Toggle value visibility"))
+		b.WriteString(helpLine("Enter", "Save"))
+		b.WriteString(helpLine("p / Space", "Peek value (view mode)"))
+		b.WriteString(helpLine("c", "Copy value (view mode)"))
+		b.WriteString(helpLine("e", "Edit (from view mode)"))
+		b.WriteString(helpLine("Esc", "Cancel / close"))
 		b.WriteString("\n")
 		b.WriteString(AccentStyle.Render(" Generator") + "\n")
 		b.WriteString(helpLine("j / k", "Navigate options"))
@@ -669,12 +578,6 @@ func (m Model) modeIndicator() string {
 	case ModeNormal:
 		style = lipgloss.NewStyle().
 			Background(ColorBlue).
-			Foreground(ColorBlack).
-			Bold(true).
-			Padding(0, 1)
-	case ModeInsert:
-		style = lipgloss.NewStyle().
-			Background(ColorGreen).
 			Foreground(ColorBlack).
 			Bold(true).
 			Padding(0, 1)

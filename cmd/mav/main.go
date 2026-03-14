@@ -236,7 +236,7 @@ func newSetCmd() *cobra.Command {
 		Use:   "set <name>",
 		Short: "Store a secret",
 		Long: `Encrypts and stores a secret. Value can be provided via:
-  --value flag, --generate flag (auto-generate password), or stdin.`,
+  --value flag, --generate flag (auto-generate password), stdin, or interactive popup.`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -257,22 +257,29 @@ func newSetCmd() *cobra.Command {
 				value = valueFlag
 			default:
 				if term.IsTerminal(int(os.Stdin.Fd())) {
-					fmt.Fprint(os.Stderr, "Enter secret value: ")
-					raw, err := term.ReadPassword(int(os.Stdin.Fd()))
-					fmt.Fprintln(os.Stderr) // newline after masked input
-					if err != nil {
-						return fmt.Errorf("reading input: %w", err)
-					}
-					value = string(raw)
-				} else {
-					// Piped input — read as plaintext.
-					scanner := bufio.NewScanner(os.Stdin)
-					if scanner.Scan() {
-						value = scanner.Text()
-					}
-					if err := scanner.Err(); err != nil {
-						return fmt.Errorf("reading input: %w", err)
-					}
+					// TTY with no flags — open modal popup in add mode.
+					return withVault(func(ctx context.Context, v vault.Vault) error {
+						modal := tui.NewSecretModalAdd(v)
+						// Pre-fill the name from the CLI argument.
+						modal.SetName(name)
+						if env, _ := cmd.Flags().GetString("env"); env != "" {
+							modal.SetEnv(env)
+						}
+						modal.SetStandalone(true)
+						p := tea.NewProgram(modal, tea.WithAltScreen())
+						if _, err := p.Run(); err != nil {
+							return fmt.Errorf("popup: %w", err)
+						}
+						return nil
+					})
+				}
+				// Piped input — read as plaintext.
+				scanner := bufio.NewScanner(os.Stdin)
+				if scanner.Scan() {
+					value = scanner.Text()
+				}
+				if err := scanner.Err(); err != nil {
+					return fmt.Errorf("reading input: %w", err)
 				}
 			}
 
@@ -302,7 +309,7 @@ func newSetCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "Secret value (visible in process list; omit for interactive prompt)")
+	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "Secret value (visible in process list; omit for interactive popup)")
 	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "Metadata as key=value (repeatable)")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	cmd.Flags().BoolVarP(&generatePw, "generate", "g", false, "Auto-generate a random password as the value")
@@ -314,14 +321,15 @@ func newSetCmd() *cobra.Command {
 
 func newGetCmd() *cobra.Command {
 	var (
-		quiet bool
-		clip  bool
+		quiet    bool
+		clip     bool
+		printRaw bool
 	)
 
 	cmd := &cobra.Command{
 		Use:               "get <name>",
 		Short:             "Retrieve a secret",
-		Long:              "Decrypts and displays a stored secret.",
+		Long:              "Decrypts and displays a stored secret. Opens an interactive popup when run in a terminal.",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -351,21 +359,44 @@ func newGetCmd() *cobra.Command {
 					return nil
 				}
 
+				// Non-TTY (piped): always output raw value.
+				if !term.IsTerminal(int(os.Stdout.Fd())) {
+					fmt.Print(entry.Value)
+					return nil
+				}
+
+				// --print: legacy plaintext output.
+				if printRaw {
+					format := resolveFormat(outputFormat)
+					if format == "json" {
+						return outputJSON(entry)
+					}
+					outputKeyValue("Name", entry.Name)
+					if entry.Environment != "" {
+						outputKeyValue("Environment", entry.Environment)
+					}
+					outputKeyValue("Value", colorize(entry.Value, ansiGreen))
+					if len(entry.Metadata) > 0 {
+						outputKeyValue("Metadata", formatMetadata(entry.Metadata))
+					}
+					outputKeyValue("Created", entry.CreatedAt)
+					outputKeyValue("Updated", entry.UpdatedAt)
+					return nil
+				}
+
+				// JSON format explicitly requested: output as JSON.
 				format := resolveFormat(outputFormat)
 				if format == "json" {
 					return outputJSON(entry)
 				}
 
-				outputKeyValue("Name", entry.Name)
-				if entry.Environment != "" {
-					outputKeyValue("Environment", entry.Environment)
+				// Default TTY behavior: open alt-screen popup in view mode.
+				modal := tui.NewSecretModalView(entry, v)
+				modal.SetStandalone(true)
+				p := tea.NewProgram(modal, tea.WithAltScreen())
+				if _, err := p.Run(); err != nil {
+					return fmt.Errorf("popup: %w", err)
 				}
-				outputKeyValue("Value", colorize(entry.Value, ansiGreen))
-				if len(entry.Metadata) > 0 {
-					outputKeyValue("Metadata", formatMetadata(entry.Metadata))
-				}
-				outputKeyValue("Created", entry.CreatedAt)
-				outputKeyValue("Updated", entry.UpdatedAt)
 				return nil
 			})
 		},
@@ -373,6 +404,7 @@ func newGetCmd() *cobra.Command {
 
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Print only the value (for piping)")
 	cmd.Flags().BoolVarP(&clip, "clip", "c", false, "Copy value to clipboard (auto-clears in 45s)")
+	cmd.Flags().BoolVarP(&printRaw, "print", "p", false, "Print secret in plaintext (legacy output)")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
@@ -509,7 +541,7 @@ func newEditCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "edit <name>",
 		Short:             "Edit an existing secret",
-		Long:              "Update the value and/or metadata of an existing secret. Unspecified fields are preserved.",
+		Long:              "Update the value and/or metadata of an existing secret. Opens an interactive popup when run in a terminal with no flags.",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -542,20 +574,33 @@ func newEditCmd() *cobra.Command {
 				}
 
 				// If neither --value nor --metadata provided and stdin is
-				// a terminal, prompt interactively for the new value.
+				// a terminal, open the modal popup in edit mode.
 				if newValue == nil && newMetadata == nil && term.IsTerminal(int(os.Stdin.Fd())) {
-					fmt.Fprint(os.Stderr, "Enter new secret value: ")
-					raw, err := term.ReadPassword(int(os.Stdin.Fd()))
-					fmt.Fprintln(os.Stderr) // newline after masked input
-					if err != nil {
+					entry, getErr := v.Get(ctx, name, resolvedEnv)
+					if getErr != nil {
+						printError(getErr.Error(), "")
+						return getErr
+					}
+					modal := tui.NewSecretModalEdit(entry, v)
+					modal.SetStandalone(true)
+					p := tea.NewProgram(modal, tea.WithAltScreen())
+					if _, runErr := p.Run(); runErr != nil {
+						return fmt.Errorf("popup: %w", runErr)
+					}
+					return nil
+				}
+
+				// Direct update path (flags or pipe).
+				if newValue == nil && newMetadata == nil {
+					// Piped input — read plaintext value.
+					scanner := bufio.NewScanner(os.Stdin)
+					if scanner.Scan() {
+						val := scanner.Text()
+						newValue = &val
+					}
+					if err := scanner.Err(); err != nil {
 						return fmt.Errorf("reading input: %w", err)
 					}
-					val := string(raw)
-					if val == "" {
-						printError("Secret value cannot be empty.", "Use --value or --metadata to update specific fields.")
-						return fmt.Errorf("empty value")
-					}
-					newValue = &val
 				}
 
 				if err := v.Edit(ctx, name, resolvedEnv, newValue, newMetadata); err != nil {
@@ -569,7 +614,7 @@ func newEditCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "New secret value (visible in process list; omit for interactive prompt)")
+	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "New secret value (visible in process list; omit for interactive popup)")
 	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "New metadata as key=value (replaces all metadata)")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd

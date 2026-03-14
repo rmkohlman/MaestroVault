@@ -18,6 +18,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.showSecretModal {
+			var updated tea.Model
+			var cmd tea.Cmd
+			updated, cmd = m.secretModal.Update(msg)
+			m.secretModal = updated.(SecretModal)
+			return m, cmd
+		}
 		return m, nil
 
 	case secretsLoadedMsg:
@@ -74,18 +81,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, clearToastAfter(3 * time.Second)
 
 	case editDetailMsg:
+		// Received decrypted secret for editing — open modal in edit mode.
 		e := msg.entry
-		m.mode = ModeInsert
-		m.screen = screenSetName
-		m.editing = true
-		m.editName = e.Name
-		m.editEnv = e.Environment
-		m.nameInput.SetValue(e.Name)
-		m.envInput.SetValue(e.Environment)
-		m.valueInput.SetValue(e.Value)
-		m.metadataInput.SetValue(formatMetadataPlain(e.Metadata))
-		m.nameInput.Focus()
+		m.secretModal = NewSecretModalEdit(e, m.vault)
+		m.secretModal.width = m.width
+		m.secretModal.height = m.height
+		m.showSecretModal = true
 		return m, textinput.Blink
+
+	case secretModalResultMsg:
+		m.showSecretModal = false
+		if msg.toast != "" {
+			m.toast = msg.toast
+			m.toastKind = msg.kind
+		}
+		if msg.saved {
+			return m, tea.Batch(loadSecrets(m.vault), clearToastAfter(3*time.Second))
+		}
+		if msg.toast != "" {
+			return m, clearToastAfter(3 * time.Second)
+		}
+		return m, nil
+
+	case secretModalCloseMsg:
+		m.showSecretModal = false
+		return m, nil
 
 	case configSavedMsg:
 		m.toast = "Settings saved"
@@ -96,25 +116,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 
-	// Forward text input updates when in insert mode or search.
-	if m.screen == screenSetName {
+	// Forward text input updates to active overlay inputs.
+	if m.showSecretModal {
+		var updated tea.Model
 		var cmd tea.Cmd
-		m.nameInput, cmd = m.nameInput.Update(msg)
-		return m, cmd
-	}
-	if m.screen == screenSetEnv {
-		var cmd tea.Cmd
-		m.envInput, cmd = m.envInput.Update(msg)
-		return m, cmd
-	}
-	if m.screen == screenSetValue {
-		var cmd tea.Cmd
-		m.valueInput, cmd = m.valueInput.Update(msg)
-		return m, cmd
-	}
-	if m.screen == screenSetMetadata {
-		var cmd tea.Cmd
-		m.metadataInput, cmd = m.metadataInput.Update(msg)
+		updated, cmd = m.secretModal.Update(msg)
+		m.secretModal = updated.(SecretModal)
 		return m, cmd
 	}
 	if m.searchActive {
@@ -145,6 +152,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// Secret modal takes priority over all other overlays.
+	if m.showSecretModal {
+		var updated tea.Model
+		var cmd tea.Cmd
+		updated, cmd = m.secretModal.Update(msg)
+		m.secretModal = updated.(SecretModal)
+		return m, cmd
+	}
+
 	// Overlay handlers take priority.
 	if m.showHelp {
 		return m.handleHelpKey(msg)
@@ -165,8 +181,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleNormal(msg)
 		case ModeVisual:
 			return m.handleVisual(msg)
-		case ModeInsert:
-			return m.handleInsert(msg)
 		}
 		return m, nil
 	}
@@ -240,18 +254,12 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 			return m, getSecret(m.vault, s.Name, s.Environment)
 		}
 
-	// Add (insert mode).
+	// Add (open modal in add mode).
 	case "i", "a", "o":
-		m.mode = ModeInsert
-		m.screen = screenSetName
-		m.editing = false
-		m.editName = ""
-		m.editEnv = ""
-		m.nameInput.SetValue("")
-		m.envInput.SetValue("")
-		m.valueInput.SetValue("")
-		m.metadataInput.SetValue("")
-		m.nameInput.Focus()
+		m.secretModal = NewSecretModalAdd(m.vault)
+		m.secretModal.width = m.width
+		m.secretModal.height = m.height
+		m.showSecretModal = true
 		return m, textinput.Blink
 
 	// Edit current.
@@ -411,112 +419,6 @@ func (m Model) handleVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeNormal
 	case "esc":
 		m.mode = ModeNormal
-	}
-
-	return m, nil
-}
-
-// ── Insert mode ───────────────────────────────────────────────
-
-func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-
-	switch m.screen {
-	case screenSetName:
-		switch key {
-		case "enter":
-			name := m.nameInput.Value()
-			if name == "" {
-				m.toast = "Name cannot be empty"
-				m.toastKind = "error"
-				return m, clearToastAfter(3 * time.Second)
-			}
-			m.screen = screenSetEnv
-			m.nameInput.Blur()
-			m.envInput.Focus()
-			return m, textinput.Blink
-		case "esc":
-			m.mode = ModeNormal
-			m.screen = screenList
-			m.nameInput.Blur()
-		default:
-			var cmd tea.Cmd
-			m.nameInput, cmd = m.nameInput.Update(msg)
-			return m, cmd
-		}
-
-	case screenSetEnv:
-		switch key {
-		case "enter":
-			m.screen = screenSetValue
-			m.envInput.Blur()
-			m.valueInput.Focus()
-			return m, textinput.Blink
-		case "esc":
-			m.mode = ModeNormal
-			m.screen = screenList
-			m.envInput.Blur()
-		default:
-			var cmd tea.Cmd
-			m.envInput, cmd = m.envInput.Update(msg)
-			return m, cmd
-		}
-
-	case screenSetValue:
-		switch {
-		case msg.Type == tea.KeyCtrlR:
-			m.valueRevealed = !m.valueRevealed
-			if m.valueRevealed {
-				m.valueInput.EchoMode = textinput.EchoNormal
-			} else {
-				m.valueInput.EchoMode = textinput.EchoPassword
-			}
-			return m, nil
-		case key == "enter":
-			value := m.valueInput.Value()
-			if value == "" {
-				m.toast = "Value cannot be empty"
-				m.toastKind = "error"
-				return m, clearToastAfter(3 * time.Second)
-			}
-			m.screen = screenSetMetadata
-			m.valueInput.Blur()
-			m.valueInput.EchoMode = textinput.EchoPassword
-			m.valueRevealed = false
-			m.metadataInput.Focus()
-			return m, textinput.Blink
-		case key == "esc":
-			m.mode = ModeNormal
-			m.screen = screenList
-			m.valueInput.Blur()
-			m.valueInput.EchoMode = textinput.EchoPassword
-			m.valueRevealed = false
-		default:
-			var cmd tea.Cmd
-			m.valueInput, cmd = m.valueInput.Update(msg)
-			return m, cmd
-		}
-
-	case screenSetMetadata:
-		switch key {
-		case "enter":
-			name := m.nameInput.Value()
-			env := m.envInput.Value()
-			value := m.valueInput.Value()
-			metadata := parseMetadataInput(m.metadataInput.Value())
-			m.mode = ModeNormal
-			m.screen = screenList
-			m.metadataInput.Blur()
-			return m, setSecret(m.vault, name, env, value, metadata)
-		case "esc":
-			m.mode = ModeNormal
-			m.screen = screenList
-			m.metadataInput.Blur()
-		default:
-			var cmd tea.Cmd
-			m.metadataInput, cmd = m.metadataInput.Update(msg)
-			return m, cmd
-		}
 	}
 
 	return m, nil
@@ -762,15 +664,10 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, getSecret(m.vault, s.Name, s.Environment)
 			}
 		case "a":
-			m.screen = screenSetName
-			m.editing = false
-			m.editName = ""
-			m.editEnv = ""
-			m.nameInput.SetValue("")
-			m.envInput.SetValue("")
-			m.valueInput.SetValue("")
-			m.metadataInput.SetValue("")
-			m.nameInput.Focus()
+			m.secretModal = NewSecretModalAdd(m.vault)
+			m.secretModal.width = m.width
+			m.secretModal.height = m.height
+			m.showSecretModal = true
 			return m, textinput.Blink
 		case "e":
 			if s := m.currentSecret(); s != nil {
@@ -840,97 +737,6 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q":
 			m.quitting = true
 			return m, tea.Quit
-		}
-
-	case screenSetName:
-		switch key {
-		case "enter":
-			name := m.nameInput.Value()
-			if name == "" {
-				m.toast = "Name cannot be empty"
-				m.toastKind = "error"
-				return m, clearToastAfter(3 * time.Second)
-			}
-			m.screen = screenSetEnv
-			m.nameInput.Blur()
-			m.envInput.Focus()
-			return m, textinput.Blink
-		case "esc":
-			m.screen = screenList
-			m.nameInput.Blur()
-		default:
-			var cmd tea.Cmd
-			m.nameInput, cmd = m.nameInput.Update(msg)
-			return m, cmd
-		}
-
-	case screenSetEnv:
-		switch key {
-		case "enter":
-			m.screen = screenSetValue
-			m.envInput.Blur()
-			m.valueInput.Focus()
-			return m, textinput.Blink
-		case "esc":
-			m.screen = screenList
-			m.envInput.Blur()
-		default:
-			var cmd tea.Cmd
-			m.envInput, cmd = m.envInput.Update(msg)
-			return m, cmd
-		}
-
-	case screenSetValue:
-		switch {
-		case msg.Type == tea.KeyCtrlR:
-			m.valueRevealed = !m.valueRevealed
-			if m.valueRevealed {
-				m.valueInput.EchoMode = textinput.EchoNormal
-			} else {
-				m.valueInput.EchoMode = textinput.EchoPassword
-			}
-			return m, nil
-		case key == "enter":
-			value := m.valueInput.Value()
-			if value == "" {
-				m.toast = "Value cannot be empty"
-				m.toastKind = "error"
-				return m, clearToastAfter(3 * time.Second)
-			}
-			m.screen = screenSetMetadata
-			m.valueInput.Blur()
-			m.valueInput.EchoMode = textinput.EchoPassword
-			m.valueRevealed = false
-			m.metadataInput.Focus()
-			return m, textinput.Blink
-		case key == "esc":
-			m.screen = screenList
-			m.valueInput.Blur()
-			m.valueInput.EchoMode = textinput.EchoPassword
-			m.valueRevealed = false
-		default:
-			var cmd tea.Cmd
-			m.valueInput, cmd = m.valueInput.Update(msg)
-			return m, cmd
-		}
-
-	case screenSetMetadata:
-		switch key {
-		case "enter":
-			name := m.nameInput.Value()
-			env := m.envInput.Value()
-			value := m.valueInput.Value()
-			metadata := parseMetadataInput(m.metadataInput.Value())
-			m.screen = screenList
-			m.metadataInput.Blur()
-			return m, setSecret(m.vault, name, env, value, metadata)
-		case "esc":
-			m.screen = screenList
-			m.metadataInput.Blur()
-		default:
-			var cmd tea.Cmd
-			m.metadataInput, cmd = m.metadataInput.Update(msg)
-			return m, cmd
 		}
 
 	case screenConfirmDelete:

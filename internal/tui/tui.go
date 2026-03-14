@@ -20,10 +20,6 @@ type screen int
 const (
 	screenList screen = iota
 	screenDetail
-	screenSetName
-	screenSetEnv
-	screenSetValue
-	screenSetMetadata
 	screenConfirmDelete
 )
 
@@ -192,15 +188,6 @@ type Model struct {
 	pendingKey   string
 	visualAnchor int
 
-	// Text inputs for the set/edit flow.
-	nameInput     textinput.Model
-	envInput      textinput.Model
-	valueInput    textinput.Model
-	metadataInput textinput.Model
-	editing       bool   // true when editing existing secret
-	editName      string // original name of secret being edited
-	editEnv       string // original environment of secret being edited
-
 	// Search.
 	searchActive bool
 	searchInput  textinput.Model
@@ -209,8 +196,9 @@ type Model struct {
 	// Detail view.
 	valueMasked bool // value masked by default in detail view
 
-	// Set/edit value input.
-	valueRevealed bool // true when value input is temporarily revealed
+	// Secret modal (unified add/edit/view overlay).
+	showSecretModal bool
+	secretModal     SecretModal
 
 	// Selected secret tracking (name + environment).
 	selectedEnv string // environment of the currently selected secret
@@ -246,41 +234,20 @@ type Opts struct {
 
 // New creates a new TUI model backed by an open vault.
 func New(v vault.Vault, opts Opts) Model {
-	ni := textinput.New()
-	ni.Placeholder = "secret-name"
-	ni.CharLimit = 128
-
-	ei := textinput.New()
-	ei.Placeholder = "environment (e.g. production, staging — leave empty for default)"
-	ei.CharLimit = 128
-
-	vi := textinput.New()
-	vi.Placeholder = "secret value"
-	vi.CharLimit = 4096
-	vi.EchoMode = textinput.EchoPassword
-
-	mi := textinput.New()
-	mi.Placeholder = "key=value, key=value (optional)"
-	mi.CharLimit = 4096
-
 	si := textinput.New()
 	si.Placeholder = "search..."
 	si.CharLimit = 128
 
 	return Model{
-		vault:         v,
-		screen:        screenList,
-		vimEnabled:    opts.VimMode,
-		fuzzySearch:   opts.FuzzySearch,
-		mode:          ModeNormal,
-		nameInput:     ni,
-		envInput:      ei,
-		valueInput:    vi,
-		metadataInput: mi,
-		searchInput:   si,
-		valueMasked:   true,
-		sortOrder:     SortNameAsc,
-		gen:           newGenState(),
+		vault:       v,
+		screen:      screenList,
+		vimEnabled:  opts.VimMode,
+		fuzzySearch: opts.FuzzySearch,
+		mode:        ModeNormal,
+		searchInput: si,
+		valueMasked: true,
+		sortOrder:   SortNameAsc,
+		gen:         newGenState(),
 	}
 }
 
