@@ -424,7 +424,7 @@ func TestNilMetadataDefaultsToEmptyObject(t *testing.T) {
 	}
 }
 
-func TestFreshInstallCreatesV2Schema(t *testing.T) {
+func TestFreshInstallCreatesV3Schema(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "fresh.db")
 
@@ -434,13 +434,13 @@ func TestFreshInstallCreatesV2Schema(t *testing.T) {
 	}
 	defer s.Close()
 
-	// Verify user_version is 2.
+	// Verify user_version is 3.
 	var version int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("PRAGMA user_version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("user_version: want 2, got %d", version)
+	if version != 3 {
+		t.Errorf("user_version: want 3, got %d", version)
 	}
 
 	// Verify secrets table has expected columns.
@@ -461,6 +461,18 @@ func TestFreshInstallCreatesV2Schema(t *testing.T) {
 		"INSERT INTO api_tokens (id, name, token_hash, salt, scopes) VALUES ('t1', 'test', 'hash', 'salt', '[]')")
 	if err != nil {
 		t.Fatalf("api_tokens insert error: %v", err)
+	}
+
+	// Verify secret_fields table exists.
+	if err := s.PutField(ctx, "test", "env", "host", []byte("enc-host"), []byte("enc-key")); err != nil {
+		t.Fatalf("PutField() error: %v", err)
+	}
+	field, err := s.GetField(ctx, "test", "env", "host")
+	if err != nil {
+		t.Fatalf("GetField() error: %v", err)
+	}
+	if string(field.EncryptedValue) != "enc-host" {
+		t.Errorf("field encrypted_value: want %q, got %q", "enc-host", field.EncryptedValue)
 	}
 }
 
@@ -523,13 +535,13 @@ func TestMigrationFromV0Schema(t *testing.T) {
 	}
 	defer s.Close()
 
-	// Verify user_version is 2.
+	// Verify user_version is 3.
 	var version int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("PRAGMA user_version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("user_version after migration: want 2, got %d", version)
+	if version != 3 {
+		t.Errorf("user_version after migration: want 3, got %d", version)
 	}
 
 	// Verify old data is accessible with new column names.
