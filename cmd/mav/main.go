@@ -2,28 +2,28 @@
 //
 // Usage:
 //
-//	maestrovault init                  Initialize a new vault
-//	maestrovault set <name>            Store a secret
-//	maestrovault get <name>            Retrieve a secret
-//	maestrovault list                  List all secrets
-//	maestrovault delete <name>         Delete a secret
-//	maestrovault edit <name>           Edit an existing secret
-//	maestrovault copy <name>           Copy a secret to the clipboard
-//	maestrovault search <query>        Search secrets by name or metadata
-//	maestrovault generate              Generate a random password
-//	maestrovault env                   Export secrets as environment variables
-//	maestrovault exec -- <cmd>         Run a command with secrets injected as env vars
-//	maestrovault export                Export vault to file
-//	maestrovault import <file>         Import secrets from file
-//	maestrovault destroy               Destroy the vault completely
-//	maestrovault tui                   Launch interactive TUI
-//	maestrovault serve                 Start the REST API server
-//	maestrovault token create          Create an API token
-//	maestrovault token list            List API tokens
-//	maestrovault token revoke          Revoke an API token
-//	maestrovault touchid enable        Enable TouchID authentication
-//	maestrovault touchid disable       Disable TouchID authentication
-//	maestrovault touchid status        Show TouchID status
+//	mav init                  Initialize a new vault
+//	mav set <name>            Store a secret
+//	mav get <name>            Retrieve a secret
+//	mav list                  List all secrets
+//	mav delete <name>         Delete a secret
+//	mav edit <name>           Edit an existing secret
+//	mav copy <name>           Copy a secret to the clipboard
+//	mav search <query>        Search secrets by name or metadata
+//	mav generate              Generate a random password
+//	mav env                   Export secrets as environment variables
+//	mav exec -- <cmd>         Run a command with secrets injected as env vars
+//	mav export                Export vault to file
+//	mav import <file>         Import secrets from file
+//	mav destroy               Destroy the vault completely
+//	mav tui                   Launch interactive TUI
+//	mav serve                 Start the REST API server
+//	mav token create          Create an API token
+//	mav token list            List API tokens
+//	mav token revoke          Revoke an API token
+//	mav touchid enable        Enable TouchID authentication
+//	mav touchid disable       Disable TouchID authentication
+//	mav touchid status        Show TouchID status
 package main
 
 import (
@@ -73,7 +73,7 @@ func main() {
 
 func buildRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "maestrovault",
+		Use:   "mav",
 		Short: "MaestroVault — secure local secrets management for developers",
 		Long: `MaestroVault is a lightweight, macOS-first secrets manager for developers.
 
@@ -207,7 +207,7 @@ func newInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			if err := vault.Init(ctx); err != nil {
-				printError(err.Error(), "If the vault already exists, use 'maestrovault destroy' first to reset it.")
+				printError(err.Error(), "If the vault already exists, use 'mav destroy' first to reset it.")
 				return err
 			}
 			printSuccess("Vault initialized successfully.")
@@ -274,7 +274,7 @@ func newSetCmd() *cobra.Command {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				env, _ := cmd.Flags().GetString("env")
 				if err := v.Set(ctx, name, env, value, metadataMap); err != nil {
-					printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
+					printError(err.Error(), "Run 'mav init' to create a new vault.")
 					return err
 				}
 
@@ -314,7 +314,7 @@ func newGetCmd() *cobra.Command {
 				env, _ := cmd.Flags().GetString("env")
 				entry, err := v.Get(ctx, args[0], env)
 				if err != nil {
-					printError(err.Error(), "Use 'maestrovault list' to see available secrets.")
+					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
 				}
 
@@ -393,7 +393,7 @@ func newListCmd() *cobra.Command {
 
 				if len(entries) == 0 {
 					fmt.Println(colorize("No secrets stored.", ansiDim))
-					fmt.Printf("  %s maestrovault set <name> --value <value>\n", colorize("Hint:", ansiYellow))
+					fmt.Printf("  %s mav set <name> --value <value>\n", colorize("Hint:", ansiYellow))
 					return nil
 				}
 
@@ -456,7 +456,7 @@ func newDeleteCmd() *cobra.Command {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				env, _ := cmd.Flags().GetString("env")
 				if err := v.Delete(ctx, name, env); err != nil {
-					printError(err.Error(), "Use 'maestrovault list' to see available secrets.")
+					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
 				}
 
@@ -505,7 +505,7 @@ func newEditCmd() *cobra.Command {
 				}
 
 				if err := v.Edit(ctx, name, env, newValue, newMetadata); err != nil {
-					printError(err.Error(), "Use 'maestrovault list' to see available secrets.")
+					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
 				}
 
@@ -535,7 +535,7 @@ func newCopyCmd() *cobra.Command {
 				env, _ := cmd.Flags().GetString("env")
 				entry, err := v.Get(ctx, args[0], env)
 				if err != nil {
-					printError(err.Error(), "Use 'maestrovault list' to see available secrets.")
+					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
 				}
 
@@ -714,8 +714,8 @@ func newEnvCmd() *cobra.Command {
 		Long: `Outputs secrets as export statements for shell evaluation.
 
 Usage:
-  eval $(maestrovault env)
-  eval $(maestrovault env --prefix APP_)`,
+  eval $(mav env)
+  eval $(mav env --prefix APP_)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				entries, err := v.Export(ctx)
@@ -754,8 +754,8 @@ func newExecCmd() *cobra.Command {
 		Long: `Executes a command with all vault secrets available as environment variables.
 
 Example:
-  maestrovault exec -- env
-  maestrovault exec --prefix DB_ -- psql`,
+  mav exec -- env
+  mav exec --prefix DB_ -- psql`,
 		DisableFlagParsing: false,
 		Args:               cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -798,8 +798,8 @@ func newExportCmd() *cobra.Command {
 		Long: `Export all secrets to stdout in JSON or .env format.
 
 Examples:
-  maestrovault export > backup.json
-  maestrovault export --format env > .env`,
+  mav export > backup.json
+  mav export --format env > .env`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				entries, err := v.Export(ctx)
@@ -845,8 +845,8 @@ func newImportCmd() *cobra.Command {
 		Long: `Import secrets from a JSON or .env file.
 
 Examples:
-  maestrovault import backup.json
-  maestrovault import --format env .env`,
+  mav import backup.json
+  mav import --format env .env`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
@@ -988,9 +988,9 @@ health checks) require a valid Bearer token.
 
 Default socket: ~/.maestrovault/maestrovault.sock
 
-Use 'maestrovault token create' to generate API tokens before starting.`,
-		Example: `  maestrovault serve
-  maestrovault serve --socket /tmp/maestrovault.sock`,
+Use 'mav token create' to generate API tokens before starting.`,
+		Example: `  mav serve
+  mav serve --socket /tmp/mav.sock`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
@@ -1008,10 +1008,9 @@ Use 'maestrovault token create' to generate API tokens before starting.`,
 
 			v, err := vault.Open(ctx)
 			if err != nil {
-				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
+				printError(err.Error(), "Run 'mav init' to create a new vault.")
 				return err
 			}
-			defer v.Close()
 
 			srv, err := api.NewServer(v, api.ServerOpts{
 				SocketPath: socketPath,
@@ -1075,9 +1074,9 @@ func newTokenCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new API token",
-		Example: `  maestrovault token create --name "ci-read" --scope read
-  maestrovault token create --name "deploy" --scope read,write --expires 24h
-  maestrovault token create --name "admin" --scope admin`,
+		Example: `  mav token create --name "ci-read" --scope read
+  mav token create --name "deploy" --scope read,write --expires 24h
+  mav token create --name "admin" --scope admin`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -1181,7 +1180,7 @@ func newTokenListCmd() *cobra.Command {
 				}
 
 				if len(tokens) == 0 {
-					fmt.Printf("  %s\n", colorize("No API tokens found. Create one with 'maestrovault token create'.", ansiDim))
+					fmt.Printf("  %s\n", colorize("No API tokens found. Create one with 'mav token create'.", ansiDim))
 					return nil
 				}
 
@@ -1237,8 +1236,8 @@ func newTokenRevokeCmd() *cobra.Command {
 		Long: `Revoke (delete) an API token by its ID, or use --all to revoke every token.
 
 The token is permanently deleted and can no longer be used to authenticate.`,
-		Example: `  maestrovault token revoke abc123
-  maestrovault token revoke --all`,
+		Example: `  mav token revoke abc123
+  mav token revoke --all`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !all && len(args) == 0 {

@@ -1,6 +1,6 @@
 version: 2
 
-project_name: maestrovault
+project_name: mav
 
 before:
   hooks:
@@ -8,9 +8,9 @@ before:
     - go test ./...
 
 builds:
-  - id: maestro
-    main: ./cmd/maestro
-    binary: maestrovault
+  - id: mav
+    main: ./cmd/mav
+    binary: mav
     env:
       - CGO_ENABLED=1
     goos:
@@ -25,7 +25,7 @@ builds:
       - -X main.date={{.Date}}
 
 universal_binaries:
-  - id: maestro
+  - id: mav
     replace: true
 
 archives:
@@ -52,9 +52,9 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/rmkohlman/MaestroVault"
-    description: "A macOS-first, developer-focused secrets management tool with CLI, TUI, and vim motions"
+    description: "MaestroVault — a macOS-first, developer-focused secrets management tool with CLI, TUI, and vim motions"
     license: "Apache-2.0"
     install: |
-      bin.install "maestrovault"
+      bin.install "mav"
     test: |
-      system "#{bin}/maestrovault", "version"
+      system "#{bin}/mav", "version"

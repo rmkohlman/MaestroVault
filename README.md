@@ -29,29 +29,29 @@ Or build from source:
 ```sh
 git clone https://github.com/rmkohlman/MaestroVault.git
 cd MaestroVault
-go build -o maestrovault ./cmd/maestro
+go build -o mav ./cmd/mav
 ```
 
 ## Quick Start
 
 ```sh
 # Initialize a new vault (creates ~/.maestrovault/)
-maestrovault init
+mav init
 
 # Store a secret (with optional environment and metadata)
-maestrovault set my-api-key --value "sk-abc123" --env prod --metadata service=api
+mav set my-api-key --value "sk-abc123" --env prod --metadata service=api
 
 # Retrieve it
-maestrovault get my-api-key --env prod
+mav get my-api-key --env prod
 
 # Copy to clipboard (auto-clears after 45s)
-maestrovault copy my-api-key --env prod
+mav copy my-api-key --env prod
 
 # Launch the TUI
-maestrovault tui
+mav tui
 
 # Launch with vim motions
-maestrovault tui --vim
+mav tui --vim
 ```
 
 ## CLI Commands
@@ -83,17 +83,17 @@ maestrovault tui --vim
 Start the server over a Unix domain socket:
 
 ```sh
-maestrovault serve
+mav serve
 ```
 
 Create a token and make requests:
 
 ```sh
 # Create a scoped token
-maestrovault token create --name ci --scopes read,write
+mav token create --name ci --scopes read,write
 
 # Use it
-curl --unix-socket ~/.maestrovault/api.sock \
+curl --unix-socket ~/.maestrovault/maestrovault.sock \
   -H "Authorization: Bearer mvt_..." \
   http://localhost/v1/secrets
 ```

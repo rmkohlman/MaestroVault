@@ -11,26 +11,26 @@ All commands support `--format json` (or `-o json`) for machine-readable output 
 
 ---
 
-## `maestrovault init`
+## `mav init`
 
 Initialize a new vault.
 
 ```bash
-maestrovault init
+mav init
 ```
 
 Creates `~/.maestrovault/`, generates a master key, and stores it in the macOS Keychain. Fails if a vault already exists.
 
 ---
 
-## `maestrovault set <name>`
+## `mav set <name>`
 
 Store or update a secret.
 
 ```bash
-maestrovault set db-password --value "s3cret"
-maestrovault set api-key --value "sk-123" --env prod --metadata service=api
-echo "piped-value" | maestrovault set token-name
+mav set db-password --value "s3cret"
+mav set api-key --value "sk-123" --env prod --metadata service=api
+echo "piped-value" | mav set token-name
 ```
 
 | Flag | Description |
@@ -44,14 +44,14 @@ echo "piped-value" | maestrovault set token-name
 
 ---
 
-## `maestrovault get <name>`
+## `mav get <name>`
 
 Retrieve and decrypt a secret.
 
 ```bash
-maestrovault get db-password
-maestrovault get db-password --env prod
-maestrovault get db-password -o json
+mav get db-password
+mav get db-password --env prod
+mav get db-password -o json
 ```
 
 | Flag | Description |
@@ -64,15 +64,15 @@ Shell completion is available for secret names.
 
 ---
 
-## `maestrovault list`
+## `mav list`
 
 List all secrets (values are not shown).
 
 ```bash
-maestrovault list
-maestrovault list --env prod
-maestrovault list --metadata-key service --metadata-value postgres
-maestrovault list -o json
+mav list
+mav list --env prod
+mav list --metadata-key service --metadata-value postgres
+mav list -o json
 ```
 
 | Flag | Description |
@@ -84,13 +84,13 @@ maestrovault list -o json
 
 ---
 
-## `maestrovault delete <name>`
+## `mav delete <name>`
 
 Delete a secret. Requires confirmation unless `--force` is used.
 
 ```bash
-maestrovault delete old-key
-maestrovault delete old-key --force
+mav delete old-key
+mav delete old-key --force
 ```
 
 | Flag | Description |
@@ -100,13 +100,13 @@ maestrovault delete old-key --force
 
 ---
 
-## `maestrovault edit <name>`
+## `mav edit <name>`
 
 Update an existing secret's value or metadata.
 
 ```bash
-maestrovault edit db-password --value "new-password"
-maestrovault edit api-key --metadata env=staging
+mav edit db-password --value "new-password"
+mav edit api-key --metadata env=staging
 ```
 
 | Flag | Description |
@@ -117,13 +117,13 @@ maestrovault edit api-key --metadata env=staging
 
 ---
 
-## `maestrovault copy <name>`
+## `mav copy <name>`
 
 Copy a secret's value to the system clipboard.
 
 ```bash
-maestrovault copy db-password
-maestrovault copy db-password --clear 10s
+mav copy db-password
+mav copy db-password --clear 10s
 ```
 
 | Flag | Description |
@@ -133,25 +133,25 @@ maestrovault copy db-password --clear 10s
 
 ---
 
-## `maestrovault search <query>`
+## `mav search <query>`
 
 Search secrets by name, environment, and metadata.
 
 ```bash
-maestrovault search postgres
-maestrovault search prod -o json
+mav search postgres
+mav search prod -o json
 ```
 
 ---
 
-## `maestrovault generate`
+## `mav generate`
 
 Generate a random password.
 
 ```bash
-maestrovault generate
-maestrovault generate --name wifi --length 24
-maestrovault generate --no-symbols --no-uppercase
+mav generate
+mav generate --name wifi --length 24
+mav generate --no-symbols --no-uppercase
 ```
 
 | Flag | Description |
@@ -171,38 +171,38 @@ maestrovault generate --no-symbols --no-uppercase
 
 ---
 
-## `maestrovault env`
+## `mav env`
 
 Print secrets as shell export statements.
 
 ```bash
-maestrovault env
-eval $(maestrovault env)
+mav env
+eval $(mav env)
 ```
 
 Secret names are converted to environment variable format: uppercase, dashes/dots/spaces become underscores. For example, `db-password` becomes `DB_PASSWORD`.
 
 ---
 
-## `maestrovault exec -- <command>`
+## `mav exec -- <command>`
 
 Run a command with all secrets injected as environment variables.
 
 ```bash
-maestrovault exec -- env
-maestrovault exec -- node server.js
-maestrovault exec -- docker compose up
+mav exec -- env
+mav exec -- node server.js
+mav exec -- docker compose up
 ```
 
 ---
 
-## `maestrovault export`
+## `mav export`
 
 Export all secrets to stdout (plaintext).
 
 ```bash
-maestrovault export > backup.json
-maestrovault export --format env > .env
+mav export > backup.json
+mav export --format env > .env
 ```
 
 | Flag | Description |
@@ -214,14 +214,14 @@ maestrovault export --format env > .env
 
 ---
 
-## `maestrovault import <file>`
+## `mav import <file>`
 
 Import secrets from a file.
 
 ```bash
-maestrovault import backup.json
-maestrovault import --format env .env
-maestrovault import backup.json --force
+mav import backup.json
+mav import --format env .env
+mav import backup.json --force
 ```
 
 | Flag | Description |
@@ -231,13 +231,13 @@ maestrovault import backup.json --force
 
 ---
 
-## `maestrovault destroy`
+## `mav destroy`
 
 Permanently destroy the vault, database, and master key.
 
 ```bash
-maestrovault destroy
-maestrovault destroy --force
+mav destroy
+mav destroy --force
 ```
 
 | Flag | Description |
@@ -249,13 +249,13 @@ maestrovault destroy --force
 
 ---
 
-## `maestrovault tui`
+## `mav tui`
 
 Launch the interactive terminal UI.
 
 ```bash
-maestrovault tui
-maestrovault tui --vim
+mav tui
+mav tui --vim
 ```
 
 | Flag | Description |
@@ -266,13 +266,13 @@ See the [TUI Guide](tui.md) for keyboard shortcuts.
 
 ---
 
-## `maestrovault serve`
+## `mav serve`
 
 Start the REST API server on a Unix domain socket.
 
 ```bash
-maestrovault serve
-maestrovault serve --socket /tmp/maestrovault.sock
+mav serve
+mav serve --socket /tmp/mav.sock
 ```
 
 | Flag | Description |
@@ -283,16 +283,16 @@ See the [REST API reference](api.md) for endpoints.
 
 ---
 
-## `maestrovault token`
+## `mav token`
 
 Manage API tokens for the REST API server.
 
 ### `token create`
 
 ```bash
-maestrovault token create --name "ci-read" --scope read
-maestrovault token create --name "deploy" --scope read,write --expires 24h
-maestrovault token create --name "admin" --scope admin
+mav token create --name "ci-read" --scope read
+mav token create --name "deploy" --scope read,write --expires 24h
+mav token create --name "admin" --scope admin
 ```
 
 | Flag | Description |
@@ -307,15 +307,15 @@ maestrovault token create --name "admin" --scope admin
 ### `token list`
 
 ```bash
-maestrovault token list
-maestrovault token list -o json
+mav token list
+mav token list -o json
 ```
 
 ### `token revoke`
 
 ```bash
-maestrovault token revoke <id>
-maestrovault token revoke --all
+mav token revoke <id>
+mav token revoke --all
 ```
 
 | Flag | Description |
@@ -324,14 +324,14 @@ maestrovault token revoke --all
 
 ---
 
-## `maestrovault touchid`
+## `mav touchid`
 
 Manage TouchID biometric authentication.
 
 ### `touchid enable`
 
 ```bash
-maestrovault touchid enable
+mav touchid enable
 ```
 
 Checks hardware availability, performs a verification prompt, then saves the setting.
@@ -339,7 +339,7 @@ Checks hardware availability, performs a verification prompt, then saves the set
 ### `touchid disable`
 
 ```bash
-maestrovault touchid disable
+mav touchid disable
 ```
 
 Requires TouchID authentication to disable (prevents unauthorized disabling).
@@ -347,19 +347,19 @@ Requires TouchID authentication to disable (prevents unauthorized disabling).
 ### `touchid status`
 
 ```bash
-maestrovault touchid status
-maestrovault touchid status -o json
+mav touchid status
+mav touchid status -o json
 ```
 
 ---
 
-## `maestrovault version`
+## `mav version`
 
 Print build version, commit, date, Go version, and OS/arch.
 
 ```bash
-maestrovault version
-maestrovault version -o json
+mav version
+mav version -o json
 ```
 
 ---
@@ -370,13 +370,13 @@ MaestroVault supports shell completions for Bash, Zsh, Fish, and PowerShell via 
 
 ```bash
 # Bash
-maestrovault completion bash > /usr/local/etc/bash_completion.d/maestrovault
+mav completion bash > /usr/local/etc/bash_completion.d/mav
 
 # Zsh
-maestrovault completion zsh > "${fpath[1]}/_maestrovault"
+mav completion zsh > "${fpath[1]}/_mav"
 
 # Fish
-maestrovault completion fish > ~/.config/fish/completions/maestrovault.fish
+mav completion fish > ~/.config/fish/completions/mav.fish
 ```
 
 Secret names are completed dynamically -- press Tab after `get`, `delete`, `edit`, or `copy` to see available names.

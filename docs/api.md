@@ -5,7 +5,7 @@ MaestroVault includes a REST API server that listens on a Unix domain socket. Th
 ## Starting the Server
 
 ```bash
-maestrovault serve
+mav serve
 ```
 
 Default socket: `~/.maestrovault/maestrovault.sock`
@@ -13,7 +13,7 @@ Default socket: `~/.maestrovault/maestrovault.sock`
 Custom socket:
 
 ```bash
-maestrovault serve --socket /tmp/maestrovault.sock
+mav serve --socket /tmp/mav.sock
 ```
 
 The server runs in the foreground and shuts down gracefully on `Ctrl+C` (SIGINT/SIGTERM). The socket file is cleaned up on exit.
@@ -29,7 +29,7 @@ Authorization: Bearer mvt_abc123...
 Create tokens with:
 
 ```bash
-maestrovault token create --name "my-token" --scope read,write
+mav token create --name "my-token" --scope read,write
 ```
 
 ### Scopes

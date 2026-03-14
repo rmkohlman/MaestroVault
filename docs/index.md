@@ -25,16 +25,16 @@ MaestroVault encrypts your secrets locally with AES-256-GCM envelope encryption,
 brew install rmkohlman/tap/maestrovault
 
 # Create a vault
-maestrovault init
+mav init
 
 # Store a secret
-maestrovault set db-password --value "s3cret" --env prod --metadata service=postgres
+mav set db-password --value "s3cret" --env prod --metadata service=postgres
 
 # Retrieve it
-maestrovault get db-password --env prod
+mav get db-password --env prod
 
 # Launch the TUI
-maestrovault tui
+mav tui
 ```
 
 ## How it works
@@ -58,7 +58,7 @@ Each secret is encrypted with its own randomly generated data key. The data keys
 ## Project layout
 
 ```
-maestrovault
+mav
   init          Create a new vault
   set           Store a secret
   get           Retrieve a secret

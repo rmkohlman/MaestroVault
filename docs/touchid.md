@@ -32,7 +32,7 @@ Ready
 ## Enabling TouchID
 
 ```bash
-maestrovault touchid enable
+mav touchid enable
 ```
 
 This command:
@@ -44,7 +44,7 @@ This command:
 ## Disabling TouchID
 
 ```bash
-maestrovault touchid disable
+mav touchid disable
 ```
 
 Disabling requires TouchID authentication first -- this prevents an unauthorized user from silently turning off biometric protection.
@@ -52,7 +52,7 @@ Disabling requires TouchID authentication first -- this prevents an unauthorized
 ## Checking Status
 
 ```bash
-maestrovault touchid status
+mav touchid status
 ```
 
 Shows whether TouchID is enabled in config and whether the hardware is available:
@@ -65,7 +65,7 @@ Shows whether TouchID is enabled in config and whether the hardware is available
 JSON output:
 
 ```bash
-maestrovault touchid status -o json
+mav touchid status -o json
 ```
 
 ```json
@@ -91,7 +91,7 @@ The file is created with `0600` permissions. If the file is missing, TouchID def
 
 - macOS with Touch ID sensor (MacBook Pro/Air 2016+, some iMacs) or
 - Apple Watch paired for Mac unlock
-- The vault must be initialized (`maestrovault init`)
+- The vault must be initialized (`mav init`)
 
 ## Security Notes
 
@@ -116,4 +116,4 @@ The file is created with `0600` permissions. If the file is missing, TouchID def
 
 **TouchID enabled but hardware not available**
 
-This can happen if you enabled TouchID on a Mac with the sensor and then moved the vault directory to a Mac without one. Run `maestrovault touchid disable` -- since the hardware is not available, the disable command skips the biometric check.
+This can happen if you enabled TouchID on a Mac with the sensor and then moved the vault directory to a Mac without one. Run `mav touchid disable` -- since the hardware is not available, the disable command skips the biometric check.

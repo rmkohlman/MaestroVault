@@ -3,7 +3,7 @@
 Launch the interactive terminal UI with:
 
 ```bash
-maestrovault tui
+mav tui
 ```
 
 The TUI provides a full-screen interface for browsing, searching, copying, editing, and generating secrets without remembering CLI flags.
@@ -13,7 +13,7 @@ The TUI provides a full-screen interface for browsing, searching, copying, editi
 Enable vim-style keybindings with:
 
 ```bash
-maestrovault tui --vim
+mav tui --vim
 ```
 
 Vim mode adds Normal, Visual, and Insert modes with a mode indicator in the footer.

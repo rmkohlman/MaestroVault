@@ -18,7 +18,7 @@ brew install rmkohlman/tap/maestrovault
 ```bash
 git clone https://github.com/rmkohlman/MaestroVault.git
 cd MaestroVault
-go build -o maestrovault ./cmd/maestro
+go build -o mav ./cmd/mav
 ```
 
 ### From GitHub Releases
@@ -28,7 +28,7 @@ Download the latest binary from [GitHub Releases](https://github.com/rmkohlman/M
 ## Initialize a vault
 
 ```bash
-maestrovault init
+mav init
 ```
 
 This does three things:
@@ -43,13 +43,13 @@ This does three things:
 ## Store your first secret
 
 ```bash
-maestrovault set api-key --value "sk-abc123xyz"
+mav set api-key --value "sk-abc123xyz"
 ```
 
 You can also add metadata for organization and specify an environment:
 
 ```bash
-maestrovault set db-password \
+mav set db-password \
   --value "p@ssw0rd" \
   --env production \
   --metadata service=postgres \
@@ -59,47 +59,47 @@ maestrovault set db-password \
 If you omit `--value`, MaestroVault reads from stdin (useful for piping):
 
 ```bash
-echo "my-secret-value" | maestrovault set pipeline-token
+echo "my-secret-value" | mav set pipeline-token
 ```
 
 ## Retrieve a secret
 
 ```bash
-maestrovault get api-key
+mav get api-key
 ```
 
 Output format auto-detects: table for terminals, JSON when piped:
 
 ```bash
 # Human-readable
-maestrovault get api-key
+mav get api-key
 
 # JSON (piped or explicit)
-maestrovault get api-key -o json
+mav get api-key -o json
 ```
 
 ## List secrets
 
 ```bash
-maestrovault list
+mav list
 ```
 
 Filter by metadata:
 
 ```bash
-maestrovault list --metadata-key service --metadata-value postgres
+mav list --metadata-key service --metadata-value postgres
 ```
 
 Filter by environment:
 
 ```bash
-maestrovault list --env production
+mav list --env production
 ```
 
 ## Search
 
 ```bash
-maestrovault search postgres
+mav search postgres
 ```
 
 Searches secret names, environments, and metadata in real time.
@@ -107,52 +107,52 @@ Searches secret names, environments, and metadata in real time.
 ## Copy to clipboard
 
 ```bash
-maestrovault copy db-password
+mav copy db-password
 ```
 
 The clipboard is automatically cleared after 45 seconds. Override with `--clear`:
 
 ```bash
-maestrovault copy db-password --clear 10s
+mav copy db-password --clear 10s
 ```
 
 ## Generate a password
 
 ```bash
 # Generate and print
-maestrovault generate
+mav generate
 
 # Generate and store
-maestrovault generate --name wifi-password --length 24
+mav generate --name wifi-password --length 24
 
 # Customize character sets
-maestrovault generate --no-symbols --length 16
+mav generate --no-symbols --length 16
 ```
 
 ## Use secrets as environment variables
 
 ```bash
 # Print export statements
-maestrovault env
+mav env
 
 # Run a command with secrets injected
-maestrovault exec -- env | grep MY_SECRET
+mav exec -- env | grep MY_SECRET
 ```
 
 ## Export and import
 
 ```bash
 # Export to JSON
-maestrovault export > backup.json
+mav export > backup.json
 
 # Export to .env format
-maestrovault export --format env > .env
+mav export --format env > .env
 
 # Import from JSON
-maestrovault import backup.json
+mav import backup.json
 
 # Import from .env
-maestrovault import --format env .env
+mav import --format env .env
 ```
 
 !!! warning
@@ -161,26 +161,26 @@ maestrovault import --format env .env
 ## Enable TouchID
 
 ```bash
-maestrovault touchid enable
+mav touchid enable
 ```
 
 Once enabled, every command that accesses the vault will prompt for biometric authentication.
 
 ```bash
-maestrovault touchid status   # Check current state
-maestrovault touchid disable  # Turn it off (requires TouchID to disable)
+mav touchid status   # Check current state
+mav touchid disable  # Turn it off (requires TouchID to disable)
 ```
 
 ## Launch the TUI
 
 ```bash
-maestrovault tui
+mav tui
 ```
 
 For vim keybindings:
 
 ```bash
-maestrovault tui --vim
+mav tui --vim
 ```
 
 ## What's next
