@@ -311,7 +311,11 @@ func (m Model) viewSetScreen() string {
 	// Value field.
 	valueLabel := MutedStyle.Render("  Value:    ")
 	if m.screen == screenSetValue {
-		valueLabel = AccentStyle.Render("▸ Value:    ")
+		if m.valueRevealed {
+			valueLabel = AccentStyle.Render("▸ Value:    ") + MutedStyle.Render("(visible) ")
+		} else {
+			valueLabel = AccentStyle.Render("▸ Value:    ")
+		}
 	}
 	b.WriteString(valueLabel + m.valueInput.View())
 	b.WriteString("\n\n")
@@ -328,9 +332,17 @@ func (m Model) viewSetScreen() string {
 	b.WriteString("\n")
 
 	if m.vimEnabled {
-		b.WriteString(m.vimHelpBar())
+		if m.screen == screenSetValue {
+			b.WriteString(m.helpBar("↵", "next/save", "ctrl+r", "peek", "esc", "cancel"))
+		} else {
+			b.WriteString(m.vimHelpBar())
+		}
 	} else {
-		b.WriteString(m.helpBar("↵", "next/save", "esc", "cancel"))
+		if m.screen == screenSetValue {
+			b.WriteString(m.helpBar("↵", "next/save", "ctrl+r", "peek", "esc", "cancel"))
+		} else {
+			b.WriteString(m.helpBar("↵", "next/save", "esc", "cancel"))
+		}
 	}
 
 	return b.String()

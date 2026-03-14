@@ -192,6 +192,9 @@ type Model struct {
 	// Detail view.
 	valueMasked bool // value masked by default in detail view
 
+	// Set/edit value input.
+	valueRevealed bool // true when value input is temporarily revealed
+
 	// Selected secret tracking (name + environment).
 	selectedEnv string // environment of the currently selected secret
 

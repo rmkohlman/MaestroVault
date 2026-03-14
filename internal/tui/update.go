@@ -448,8 +448,16 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case screenSetValue:
-		switch key {
-		case "enter":
+		switch {
+		case msg.Type == tea.KeyCtrlR:
+			m.valueRevealed = !m.valueRevealed
+			if m.valueRevealed {
+				m.valueInput.EchoMode = textinput.EchoNormal
+			} else {
+				m.valueInput.EchoMode = textinput.EchoPassword
+			}
+			return m, nil
+		case key == "enter":
 			value := m.valueInput.Value()
 			if value == "" {
 				m.toast = "Value cannot be empty"
@@ -458,12 +466,16 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.screen = screenSetMetadata
 			m.valueInput.Blur()
+			m.valueInput.EchoMode = textinput.EchoPassword
+			m.valueRevealed = false
 			m.metadataInput.Focus()
 			return m, textinput.Blink
-		case "esc":
+		case key == "esc":
 			m.mode = ModeNormal
 			m.screen = screenList
 			m.valueInput.Blur()
+			m.valueInput.EchoMode = textinput.EchoPassword
+			m.valueRevealed = false
 		default:
 			var cmd tea.Cmd
 			m.valueInput, cmd = m.valueInput.Update(msg)
@@ -800,8 +812,16 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case screenSetValue:
-		switch key {
-		case "enter":
+		switch {
+		case msg.Type == tea.KeyCtrlR:
+			m.valueRevealed = !m.valueRevealed
+			if m.valueRevealed {
+				m.valueInput.EchoMode = textinput.EchoNormal
+			} else {
+				m.valueInput.EchoMode = textinput.EchoPassword
+			}
+			return m, nil
+		case key == "enter":
 			value := m.valueInput.Value()
 			if value == "" {
 				m.toast = "Value cannot be empty"
@@ -810,11 +830,15 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.screen = screenSetMetadata
 			m.valueInput.Blur()
+			m.valueInput.EchoMode = textinput.EchoPassword
+			m.valueRevealed = false
 			m.metadataInput.Focus()
 			return m, textinput.Blink
-		case "esc":
+		case key == "esc":
 			m.screen = screenList
 			m.valueInput.Blur()
+			m.valueInput.EchoMode = textinput.EchoPassword
+			m.valueRevealed = false
 		default:
 			var cmd tea.Cmd
 			m.valueInput, cmd = m.valueInput.Update(msg)

@@ -47,6 +47,7 @@ import (
 	"github.com/rmkohlman/MaestroVault/internal/tui"
 	"github.com/rmkohlman/MaestroVault/internal/vault"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // Build info — set via ldflags at build time:
@@ -81,6 +82,9 @@ Secrets are encrypted with AES-256-GCM using envelope encryption.
 The master key is stored securely in the macOS Keychain.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		CompletionOptions: cobra.CompletionOptions{
+			HiddenDefaultCmd: true,
+		},
 	}
 
 	root.PersistentFlags().StringVarP(&outputFormat, "format", "o", "", "Output format: json, table (default: auto-detect)")
@@ -251,13 +255,23 @@ func newSetCmd() *cobra.Command {
 			case valueFlag != "":
 				value = valueFlag
 			default:
-				fmt.Fprint(os.Stderr, "Enter secret value: ")
-				scanner := bufio.NewScanner(os.Stdin)
-				if scanner.Scan() {
-					value = scanner.Text()
-				}
-				if err := scanner.Err(); err != nil {
-					return fmt.Errorf("reading input: %w", err)
+				if term.IsTerminal(int(os.Stdin.Fd())) {
+					fmt.Fprint(os.Stderr, "Enter secret value: ")
+					raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+					fmt.Fprintln(os.Stderr) // newline after masked input
+					if err != nil {
+						return fmt.Errorf("reading input: %w", err)
+					}
+					value = string(raw)
+				} else {
+					// Piped input — read as plaintext.
+					scanner := bufio.NewScanner(os.Stdin)
+					if scanner.Scan() {
+						value = scanner.Text()
+					}
+					if err := scanner.Err(); err != nil {
+						return fmt.Errorf("reading input: %w", err)
+					}
 				}
 			}
 
