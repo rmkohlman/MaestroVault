@@ -56,5 +56,6 @@ brews:
     license: "Apache-2.0"
     install: |
       bin.install "mav"
+      generate_completions_from_executable(bin/"mav", "completion")
     test: |
       system "#{bin}/mav", "version"

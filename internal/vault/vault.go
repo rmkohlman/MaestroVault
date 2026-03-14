@@ -517,9 +517,15 @@ func Init(ctx context.Context) error {
 		return fmt.Errorf("creating vault directory: %w", err)
 	}
 
-	// Check if a master key already exists — refuse to overwrite.
+	// Check for orphaned state: key in keychain but no database.
+	// This happens when someone `rm -rf ~/.maestrovault/` without running destroy.
 	if keychainpkg.MasterKeyExists() {
-		return errors.New("vault already initialized: master key exists in keychain")
+		if _, err := os.Stat(DBPath()); err == nil {
+			// Both key and DB exist — vault is genuinely initialized.
+			return errors.New("vault already initialized: master key exists in keychain")
+		}
+		// Orphaned key: clean it up so we can reinitialize.
+		_ = keychainpkg.DeleteMasterKey()
 	}
 
 	// Generate a new master key.
@@ -545,8 +551,11 @@ func Init(ctx context.Context) error {
 	return nil
 }
 
-// Destroy removes the vault completely: database file and master key.
+// Destroy removes the vault completely: database file, config, socket, and master key.
+// It is intentionally resilient — missing files and missing keychain entries are
+// silently ignored so that Destroy can always clean up partial/orphaned state.
 func Destroy() error {
+	dir := Dir()
 	dbPath := DBPath()
 
 	// Remove the database file and related WAL/SHM/journal files.
@@ -554,13 +563,18 @@ func Destroy() error {
 		_ = os.Remove(dbPath + suffix)
 	}
 
+	// Remove config and socket files.
+	_ = os.Remove(filepath.Join(dir, "config.json"))
+	_ = os.Remove(filepath.Join(dir, "maestrovault.sock"))
+
 	// Remove the vault directory if it's now empty.
-	dir := Dir()
 	_ = os.Remove(dir) // os.Remove only removes empty directories.
 
-	// Delete the master key from the keychain.
-	if err := keychainpkg.DeleteMasterKey(); err != nil {
-		return fmt.Errorf("deleting master key: %w", err)
+	// Delete the master key from the keychain (ignore if already absent).
+	if keychainpkg.MasterKeyExists() {
+		if err := keychainpkg.DeleteMasterKey(); err != nil {
+			return fmt.Errorf("deleting master key: %w", err)
+		}
 	}
 
 	return nil
