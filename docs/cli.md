@@ -31,13 +31,18 @@ Store or update a secret.
 mav set db-password --value "s3cret"
 mav set api-key --value "sk-123" --env prod --metadata service=api
 echo "piped-value" | mav set token-name
+mav set db-creds --field host --value "db.example.com"
+mav set db-creds --field port --value "5432" --env prod
 ```
 
 On a TTY with no `--value` or `--generate` flag, `mav set` opens an interactive modal for entering the secret name, value, environment, and metadata.
 
+When `--field` is provided, stores a single encrypted field on the secret instead of setting the main value. The parent secret is created automatically if it doesn't exist.
+
 | Flag | Description |
 |------|-------------|
 | `--value`, `-v` | Secret value (reads from stdin if omitted) |
+| `--field` | Set a named field instead of the main value |
 | `--metadata`, `-m` | Metadata as `key=value` (repeatable) |
 | `--env`, `-e` | Environment (e.g. dev, staging, prod) |
 | `--generate`, `-g` | Auto-generate a random password as the value |
@@ -54,12 +59,17 @@ Retrieve and decrypt a secret.
 mav get db-password
 mav get db-password --env prod
 mav get db-password -o json
+mav get db-creds --field host
+mav get db-creds --field host --quiet
 ```
 
 On a TTY (without `-q`, `-c`, or `--print`), `mav get` opens an interactive modal showing the secret with the value masked. From the modal you can peek, copy, edit, or quit.
 
+When `--field` is provided, retrieves a single named field from the secret instead of the main value. Supports `--quiet`, `--clip`, and `--print` flags.
+
 | Flag | Description |
 |------|-------------|
+| `--field` | Retrieve a named field instead of the main value |
 | `--quiet`, `-q` | Print only the value (for piping) |
 | `--clip`, `-c` | Copy value to clipboard (auto-clears in 45s) |
 | `--print`, `-p` | Print the secret in plaintext (legacy behavior) |
@@ -102,10 +112,14 @@ Delete a secret. Requires confirmation unless `--force` is used.
 ```bash
 mav delete old-key
 mav delete old-key --force
+mav delete db-creds --field host
 ```
+
+When `--field` is provided, deletes a single named field from the secret instead of deleting the entire secret.
 
 | Flag | Description |
 |------|-------------|
+| `--field` | Delete a named field instead of the entire secret |
 | `--force`, `-f` | Skip confirmation prompt |
 | `--env`, `-e` | Environment (e.g. dev, staging, prod) |
 
@@ -139,10 +153,14 @@ Copy a secret's value to the system clipboard.
 ```bash
 mav copy db-password
 mav copy db-password --clear 10s
+mav copy db-creds --field host
 ```
+
+When `--field` is provided, copies the named field value instead of the main secret value.
 
 | Flag | Description |
 |------|-------------|
+| `--field` | Copy a named field value instead of the main value |
 | `--clear`, `-c` | Auto-clear clipboard after duration (default: `45s`) |
 | `--env`, `-e` | Environment (e.g. dev, staging, prod) |
 

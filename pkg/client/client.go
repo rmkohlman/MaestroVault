@@ -96,12 +96,20 @@ func New(token string, opts ...Option) (*Client, error) {
 
 // SecretEntry represents a secret returned by the API.
 type SecretEntry struct {
-	Name        string         `json:"name"`
-	Environment string         `json:"environment"`
-	Value       string         `json:"value,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   string         `json:"updated_at"`
+	Name        string            `json:"name"`
+	Environment string            `json:"environment"`
+	Value       string            `json:"value,omitempty"`
+	Fields      map[string]string `json:"fields,omitempty"`
+	FieldCount  int               `json:"field_count,omitempty"`
+	Metadata    map[string]any    `json:"metadata,omitempty"`
+	CreatedAt   string            `json:"created_at"`
+	UpdatedAt   string            `json:"updated_at"`
+}
+
+// FieldResponse represents a single field value from the API.
+type FieldResponse struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // VaultInfo contains metadata about the vault.
@@ -225,6 +233,63 @@ func (c *Client) Edit(name, env string, value *string, metadata map[string]any) 
 // Delete removes a secret.
 func (c *Client) Delete(name, env string) error {
 	path := "/v1/secrets/" + name
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
+	return c.doJSON("DELETE", path, nil, nil)
+}
+
+// ── Secret fields ─────────────────────────────────────────────
+
+// SetField stores or updates a single field within a secret.
+func (c *Client) SetField(name, env, fieldKey, value string) error {
+	path := "/v1/secrets/" + name + "/fields/" + fieldKey
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
+	body := map[string]string{"value": value}
+	return c.doJSON("PUT", path, body, nil)
+}
+
+// GetField retrieves a single decrypted field by key.
+func (c *Client) GetField(name, env, fieldKey string) (string, error) {
+	path := "/v1/secrets/" + name + "/fields/" + fieldKey
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
+	var resp FieldResponse
+	if err := c.doJSON("GET", path, nil, &resp); err != nil {
+		return "", err
+	}
+	return resp.Value, nil
+}
+
+// GetFields retrieves all decrypted fields for a secret.
+func (c *Client) GetFields(name, env string) (map[string]string, error) {
+	path := "/v1/secrets/" + name + "/fields"
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
+	var fields map[string]string
+	if err := c.doJSON("GET", path, nil, &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+// SetFields stores or updates multiple fields at once.
+func (c *Client) SetFields(name, env string, fields map[string]string) error {
+	path := "/v1/secrets/" + name + "/fields"
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
+	body := map[string]interface{}{"fields": fields}
+	return c.doJSON("PUT", path, body, nil)
+}
+
+// DeleteField removes a single field from a secret.
+func (c *Client) DeleteField(name, env, fieldKey string) error {
+	path := "/v1/secrets/" + name + "/fields/" + fieldKey
 	if env != "" {
 		path += "?env=" + url.QueryEscape(env)
 	}

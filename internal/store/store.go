@@ -34,6 +34,8 @@ var (
 
 // Secret represents a stored secret with its encrypted data and metadata.
 // This is the storage-layer model — values are always encrypted.
+// EncryptedSecret and EncryptedDataKey may be nil for entries that only
+// have fields (no single value).
 type Secret struct {
 	ID               int64
 	Name             string
@@ -41,6 +43,19 @@ type Secret struct {
 	EncryptedSecret  []byte
 	EncryptedDataKey []byte
 	Metadata         json.RawMessage
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// SecretField represents a single encrypted field within a secret entry.
+// Each field has its own envelope encryption (independent data key).
+type SecretField struct {
+	ID               int64
+	SecretName       string
+	SecretEnv        string
+	FieldKey         string
+	EncryptedValue   []byte
+	EncryptedDataKey []byte
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -91,6 +106,34 @@ type SecretStore interface {
 	// Useful for shell completions.
 	Names(ctx context.Context) ([]NameEntry, error)
 
+	// ── Field operations ─────────────────────────────────────
+
+	// EnsureEntry creates a parent secret row if one does not already exist.
+	// Used by field operations to guarantee a parent entry before inserting fields.
+	// The entry is created with NULL value/data-key (fields-only entry).
+	EnsureEntry(ctx context.Context, name, env string, metadata json.RawMessage) error
+
+	// PutField stores or updates a single encrypted field within a secret.
+	// UPSERT on (secret_name, secret_env, field_key).
+	PutField(ctx context.Context, name, env, fieldKey string, encValue, encDataKey []byte) error
+
+	// GetField retrieves a single encrypted field by key.
+	// Returns ErrNotFound if the field does not exist.
+	GetField(ctx context.Context, name, env, fieldKey string) (*SecretField, error)
+
+	// ListFields returns all encrypted fields for a secret.
+	ListFields(ctx context.Context, name, env string) ([]SecretField, error)
+
+	// DeleteField removes a single field from a secret.
+	// Returns ErrNotFound if the field does not exist.
+	DeleteField(ctx context.Context, name, env, fieldKey string) error
+
+	// DeleteAllFields removes all fields belonging to a secret.
+	DeleteAllFields(ctx context.Context, name, env string) error
+
+	// FieldCount returns the number of fields for a secret.
+	FieldCount(ctx context.Context, name, env string) (int, error)
+
 	// Close releases all database resources.
 	Close() error
 
@@ -137,16 +180,16 @@ var _ SecretStore = (*SQLiteStore)(nil)
 
 // ── Migration ────────────────────────────────────────────────
 
-const schemaVersion = 2
+const schemaVersion = 3
 
-// v2 fresh schema SQL.
-const v2SchemaSQL = `
+// v3 fresh schema SQL.
+const v3SchemaSQL = `
 CREATE TABLE IF NOT EXISTS secrets (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     name               TEXT NOT NULL,
     environment        TEXT NOT NULL DEFAULT '',
-    encrypted_secret   BLOB NOT NULL,
-    encrypted_data_key BLOB NOT NULL,
+    encrypted_secret   BLOB,
+    encrypted_data_key BLOB,
     metadata           TEXT NOT NULL DEFAULT '{}',
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -154,6 +197,19 @@ CREATE TABLE IF NOT EXISTS secrets (
 );
 CREATE INDEX IF NOT EXISTS idx_secrets_name ON secrets(name);
 CREATE INDEX IF NOT EXISTS idx_secrets_env ON secrets(environment);
+
+CREATE TABLE IF NOT EXISTS secret_fields (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    secret_name        TEXT NOT NULL,
+    secret_env         TEXT NOT NULL DEFAULT '',
+    field_key          TEXT NOT NULL,
+    encrypted_value    BLOB NOT NULL,
+    encrypted_data_key BLOB NOT NULL,
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(secret_name, secret_env, field_key)
+);
+CREATE INDEX IF NOT EXISTS idx_secret_fields_name_env ON secret_fields(secret_name, secret_env);
 
 CREATE TABLE IF NOT EXISTS api_tokens (
     id          TEXT PRIMARY KEY,
@@ -166,6 +222,50 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     last_used_at DATETIME
 );
 CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
+`
+
+// v2 → v3 migration SQL.
+// Makes encrypted_secret/encrypted_data_key nullable and adds secret_fields table.
+const v2ToV3MigrationSQL = `
+-- Rebuild secrets table with nullable value columns
+ALTER TABLE secrets RENAME TO _secrets_old;
+DROP INDEX IF EXISTS idx_secrets_name;
+DROP INDEX IF EXISTS idx_secrets_env;
+
+CREATE TABLE secrets (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    name               TEXT NOT NULL,
+    environment        TEXT NOT NULL DEFAULT '',
+    encrypted_secret   BLOB,
+    encrypted_data_key BLOB,
+    metadata           TEXT NOT NULL DEFAULT '{}',
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(name, environment)
+);
+
+INSERT INTO secrets (id, name, environment, encrypted_secret, encrypted_data_key, metadata, created_at, updated_at)
+    SELECT id, name, environment, encrypted_secret, encrypted_data_key, metadata, created_at, updated_at
+    FROM _secrets_old;
+
+DROP TABLE _secrets_old;
+
+CREATE INDEX idx_secrets_name ON secrets(name);
+CREATE INDEX idx_secrets_env ON secrets(environment);
+
+-- Create secret_fields table
+CREATE TABLE IF NOT EXISTS secret_fields (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    secret_name        TEXT NOT NULL,
+    secret_env         TEXT NOT NULL DEFAULT '',
+    field_key          TEXT NOT NULL,
+    encrypted_value    BLOB NOT NULL,
+    encrypted_data_key BLOB NOT NULL,
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(secret_name, secret_env, field_key)
+);
+CREATE INDEX IF NOT EXISTS idx_secret_fields_name_env ON secret_fields(secret_name, secret_env);
 `
 
 // v0 → v2 migration SQL.
@@ -209,7 +309,16 @@ func (s *SQLiteStore) migrate() error {
 
 	switch version {
 	case schemaVersion:
-		// Already at v2, nothing to do.
+		// Already at v3, nothing to do.
+		return nil
+	case 2:
+		// v2 → v3: make value columns nullable, add secret_fields table.
+		if _, err := s.db.Exec(v2ToV3MigrationSQL); err != nil {
+			return fmt.Errorf("migrate v2 to v3: %w", err)
+		}
+		if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+			return fmt.Errorf("set user_version: %w", err)
+		}
 		return nil
 	case 0:
 		// Check if tables already exist (v0 legacy) or this is a fresh install.
@@ -219,16 +328,19 @@ func (s *SQLiteStore) migrate() error {
 		).Scan(&tableName)
 
 		if errors.Is(err, sql.ErrNoRows) {
-			// Fresh install — create v2 schema directly.
-			if _, err := s.db.Exec(v2SchemaSQL); err != nil {
-				return fmt.Errorf("create v2 schema: %w", err)
+			// Fresh install — create v3 schema directly.
+			if _, err := s.db.Exec(v3SchemaSQL); err != nil {
+				return fmt.Errorf("create v3 schema: %w", err)
 			}
 		} else if err != nil {
 			return fmt.Errorf("check existing tables: %w", err)
 		} else {
-			// Legacy v0 tables exist — run ALTER TABLE migration.
+			// Legacy v0 tables exist — run v0→v2 then v2→v3.
 			if _, err := s.db.Exec(v0ToV2MigrationSQL); err != nil {
 				return fmt.Errorf("migrate v0 to v2: %w", err)
+			}
+			if _, err := s.db.Exec(v2ToV3MigrationSQL); err != nil {
+				return fmt.Errorf("migrate v2 to v3: %w", err)
 			}
 		}
 
@@ -273,9 +385,10 @@ func (s *SQLiteStore) Get(ctx context.Context, name, env string) (*Secret, error
 
 	var sec Secret
 	var meta string
+	var encSecret, encDataKey []byte
 	err := s.db.QueryRowContext(ctx, query, name, env).Scan(
 		&sec.ID, &sec.Name, &sec.Environment,
-		&sec.EncryptedSecret, &sec.EncryptedDataKey,
+		&encSecret, &encDataKey,
 		&meta, &sec.CreatedAt, &sec.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -284,6 +397,8 @@ func (s *SQLiteStore) Get(ctx context.Context, name, env string) (*Secret, error
 	if err != nil {
 		return nil, fmt.Errorf("get secret %q (env=%q): %w", name, env, err)
 	}
+	sec.EncryptedSecret = encSecret
+	sec.EncryptedDataKey = encDataKey
 	sec.Metadata = json.RawMessage(meta)
 	return &sec, nil
 }
@@ -309,6 +424,10 @@ func (s *SQLiteStore) List(ctx context.Context, env string) ([]Secret, error) {
 }
 
 func (s *SQLiteStore) Delete(ctx context.Context, name, env string) error {
+	// Delete associated fields first.
+	_, _ = s.db.ExecContext(ctx,
+		"DELETE FROM secret_fields WHERE secret_name = ? AND secret_env = ?", name, env)
+
 	res, err := s.db.ExecContext(ctx,
 		"DELETE FROM secrets WHERE name = ? AND environment = ?", name, env)
 	if err != nil {
@@ -414,21 +533,153 @@ func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
 }
 
+// ── Field operations ─────────────────────────────────────────
+
+// EnsureEntry creates a parent secret row if one does not already exist.
+// Used by field operations to guarantee a parent entry before inserting fields.
+// The entry is created with NULL value/data-key (fields-only entry).
+func (s *SQLiteStore) EnsureEntry(ctx context.Context, name, env string, metadata json.RawMessage) error {
+	if metadata == nil {
+		metadata = json.RawMessage("{}")
+	}
+	const query = `
+		INSERT INTO secrets (name, environment, encrypted_secret, encrypted_data_key, metadata, updated_at)
+		VALUES (?, ?, NULL, NULL, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(name, environment) DO NOTHING`
+	_, err := s.db.ExecContext(ctx, query, name, env, string(metadata))
+	if err != nil {
+		return fmt.Errorf("ensure entry %q (env=%q): %w", name, env, err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) PutField(ctx context.Context, name, env, fieldKey string, encValue, encDataKey []byte) error {
+	const query = `
+		INSERT INTO secret_fields (secret_name, secret_env, field_key, encrypted_value, encrypted_data_key, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(secret_name, secret_env, field_key) DO UPDATE SET
+		    encrypted_value = excluded.encrypted_value,
+		    encrypted_data_key = excluded.encrypted_data_key,
+		    updated_at = CURRENT_TIMESTAMP`
+
+	_, err := s.db.ExecContext(ctx, query, name, env, fieldKey, encValue, encDataKey)
+	if err != nil {
+		return fmt.Errorf("put field %q for secret %q (env=%q): %w", fieldKey, name, env, err)
+	}
+
+	// Touch the parent entry's updated_at.
+	_, _ = s.db.ExecContext(ctx,
+		"UPDATE secrets SET updated_at = CURRENT_TIMESTAMP WHERE name = ? AND environment = ?",
+		name, env)
+
+	return nil
+}
+
+func (s *SQLiteStore) GetField(ctx context.Context, name, env, fieldKey string) (*SecretField, error) {
+	const query = `
+		SELECT id, secret_name, secret_env, field_key, encrypted_value, encrypted_data_key, created_at, updated_at
+		FROM secret_fields
+		WHERE secret_name = ? AND secret_env = ? AND field_key = ?`
+
+	var f SecretField
+	err := s.db.QueryRowContext(ctx, query, name, env, fieldKey).Scan(
+		&f.ID, &f.SecretName, &f.SecretEnv, &f.FieldKey,
+		&f.EncryptedValue, &f.EncryptedDataKey,
+		&f.CreatedAt, &f.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get field %q for secret %q (env=%q): %w", fieldKey, name, env, err)
+	}
+	return &f, nil
+}
+
+func (s *SQLiteStore) ListFields(ctx context.Context, name, env string) ([]SecretField, error) {
+	const query = `
+		SELECT id, secret_name, secret_env, field_key, encrypted_value, encrypted_data_key, created_at, updated_at
+		FROM secret_fields
+		WHERE secret_name = ? AND secret_env = ?
+		ORDER BY field_key`
+
+	rows, err := s.db.QueryContext(ctx, query, name, env)
+	if err != nil {
+		return nil, fmt.Errorf("list fields for secret %q (env=%q): %w", name, env, err)
+	}
+	defer rows.Close()
+
+	var fields []SecretField
+	for rows.Next() {
+		var f SecretField
+		if err := rows.Scan(
+			&f.ID, &f.SecretName, &f.SecretEnv, &f.FieldKey,
+			&f.EncryptedValue, &f.EncryptedDataKey,
+			&f.CreatedAt, &f.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan field: %w", err)
+		}
+		fields = append(fields, f)
+	}
+	return fields, rows.Err()
+}
+
+func (s *SQLiteStore) DeleteField(ctx context.Context, name, env, fieldKey string) error {
+	res, err := s.db.ExecContext(ctx,
+		"DELETE FROM secret_fields WHERE secret_name = ? AND secret_env = ? AND field_key = ?",
+		name, env, fieldKey)
+	if err != nil {
+		return fmt.Errorf("delete field %q for secret %q (env=%q): %w", fieldKey, name, env, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete field rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLiteStore) DeleteAllFields(ctx context.Context, name, env string) error {
+	_, err := s.db.ExecContext(ctx,
+		"DELETE FROM secret_fields WHERE secret_name = ? AND secret_env = ?", name, env)
+	if err != nil {
+		return fmt.Errorf("delete all fields for secret %q (env=%q): %w", name, env, err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) FieldCount(ctx context.Context, name, env string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM secret_fields WHERE secret_name = ? AND secret_env = ?",
+		name, env).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count fields for secret %q (env=%q): %w", name, env, err)
+	}
+	return count, nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 // scanSecrets scans all rows into a slice of Secret.
+// Handles nullable encrypted_secret and encrypted_data_key columns.
 func scanSecrets(rows *sql.Rows) ([]Secret, error) {
 	var secrets []Secret
 	for rows.Next() {
 		var sec Secret
 		var meta string
+		var encSecret, encDataKey []byte
 		if err := rows.Scan(
 			&sec.ID, &sec.Name, &sec.Environment,
-			&sec.EncryptedSecret, &sec.EncryptedDataKey,
+			&encSecret, &encDataKey,
 			&meta, &sec.CreatedAt, &sec.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan secret: %w", err)
 		}
+		sec.EncryptedSecret = encSecret
+		sec.EncryptedDataKey = encDataKey
 		sec.Metadata = json.RawMessage(meta)
 		secrets = append(secrets, sec)
 	}

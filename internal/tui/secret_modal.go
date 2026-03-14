@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,15 +23,47 @@ const (
 	modalAdd
 )
 
-// ── Field indices for edit/add form ───────────────────────────
+// ── Fixed field indices for edit/add form ─────────────────────
+//
+// The form has 4 fixed inputs (name, env, value, metadata) followed by
+// zero or more dynamic field pairs.  focusField 0..3 = fixed fields,
+// focusField >= fixedFieldCount targets a field pair.
 
 const (
 	fieldName     = 0
 	fieldEnv      = 1
 	fieldValue    = 2
 	fieldMetadata = 3
-	fieldCount    = 4
+	// Number of fixed inputs before dynamic field pairs.
+	fixedFieldCount = 4
 )
+
+// fieldPair is one key=value row in the dynamic fields section.
+type fieldPair struct {
+	keyInput   textinput.Model
+	valueInput textinput.Model
+}
+
+func newFieldPair(key, value string) fieldPair {
+	ki := textinput.New()
+	ki.Placeholder = "field key"
+	ki.CharLimit = 256
+	ki.SetValue(key)
+
+	vi := textinput.New()
+	vi.Placeholder = "field value"
+	vi.CharLimit = 4096
+	vi.EchoMode = textinput.EchoPassword
+	vi.SetValue(value)
+
+	return fieldPair{keyInput: ki, valueInput: vi}
+}
+
+// totalInputCount returns the total number of focusable inputs
+// (4 fixed + 2 per field pair).
+func totalInputCount(pairs int) int {
+	return fixedFieldCount + pairs*2
+}
 
 // ── Messages ──────────────────────────────────────────────────
 
@@ -72,11 +105,16 @@ type SecretModal struct {
 	envInput      textinput.Model
 	valueInput    textinput.Model
 	metadataInput textinput.Model
-	focusField    int  // which field has focus (fieldName..fieldMetadata)
+	focusField    int  // which input has focus (0..fixedFieldCount-1 for fixed, then pairs)
 	valueRevealed bool // true when Ctrl+R has been pressed to peek
 
+	// Dynamic field pairs (edit + add modes).
+	fieldPairs []fieldPair
+
 	// View mode state.
-	valueMasked bool // value masked in view mode
+	valueMasked bool         // value masked in view mode
+	viewCursor  int          // 0 = value, 1..N = fields (sorted by key)
+	viewMasks   map[int]bool // per-item mask state in view mode (true = masked)
 
 	// Dimensions.
 	width  int
@@ -99,11 +137,20 @@ type SecretModal struct {
 
 // NewSecretModalView creates a modal in view mode for the given secret.
 func NewSecretModalView(entry *vault.SecretEntry, v vault.Vault) SecretModal {
+	masks := make(map[int]bool)
+	// Mask the main value and all fields by default.
+	masks[0] = true
+	if entry != nil {
+		for i := range sortedFieldKeys(entry.Fields) {
+			masks[i+1] = true
+		}
+	}
 	m := SecretModal{
 		vault:       v,
 		mode:        modalView,
 		entry:       entry,
 		valueMasked: true,
+		viewMasks:   masks,
 	}
 	m.initInputs()
 	return m
@@ -123,6 +170,13 @@ func NewSecretModalEdit(entry *vault.SecretEntry, v vault.Vault) SecretModal {
 	m.envInput.SetValue(entry.Environment)
 	m.valueInput.SetValue(entry.Value)
 	m.metadataInput.SetValue(formatMetadataPlain(entry.Metadata))
+	// Populate field pairs from entry.
+	if len(entry.Fields) > 0 {
+		keys := sortedFieldKeys(entry.Fields)
+		for _, k := range keys {
+			m.fieldPairs = append(m.fieldPairs, newFieldPair(k, entry.Fields[k]))
+		}
+	}
 	m.focusField = fieldName
 	m.focusCurrentField()
 	return m
@@ -150,7 +204,7 @@ func (m *SecretModal) initInputs() {
 	ei.CharLimit = 128
 
 	vi := textinput.New()
-	vi.Placeholder = "secret value"
+	vi.Placeholder = "secret value (optional if fields set)"
 	vi.CharLimit = 4096
 	vi.EchoMode = textinput.EchoPassword
 
@@ -169,6 +223,10 @@ func (m *SecretModal) focusCurrentField() {
 	m.envInput.Blur()
 	m.valueInput.Blur()
 	m.metadataInput.Blur()
+	for i := range m.fieldPairs {
+		m.fieldPairs[i].keyInput.Blur()
+		m.fieldPairs[i].valueInput.Blur()
+	}
 
 	switch m.focusField {
 	case fieldName:
@@ -179,6 +237,18 @@ func (m *SecretModal) focusCurrentField() {
 		m.valueInput.Focus()
 	case fieldMetadata:
 		m.metadataInput.Focus()
+	default:
+		// Dynamic field pair focus.
+		idx := m.focusField - fixedFieldCount
+		pairIdx := idx / 2
+		isValue := idx%2 == 1
+		if pairIdx >= 0 && pairIdx < len(m.fieldPairs) {
+			if isValue {
+				m.fieldPairs[pairIdx].valueInput.Focus()
+			} else {
+				m.fieldPairs[pairIdx].keyInput.Focus()
+			}
+		}
 	}
 }
 
@@ -247,15 +317,26 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m SecretModal) forwardToInput(msg tea.Msg) (SecretModal, tea.Cmd) {
 	var cmd tea.Cmd
-	switch m.focusField {
-	case fieldName:
+	switch {
+	case m.focusField == fieldName:
 		m.nameInput, cmd = m.nameInput.Update(msg)
-	case fieldEnv:
+	case m.focusField == fieldEnv:
 		m.envInput, cmd = m.envInput.Update(msg)
-	case fieldValue:
+	case m.focusField == fieldValue:
 		m.valueInput, cmd = m.valueInput.Update(msg)
-	case fieldMetadata:
+	case m.focusField == fieldMetadata:
 		m.metadataInput, cmd = m.metadataInput.Update(msg)
+	case m.focusField >= fixedFieldCount:
+		idx := m.focusField - fixedFieldCount
+		pairIdx := idx / 2
+		isValue := idx%2 == 1
+		if pairIdx >= 0 && pairIdx < len(m.fieldPairs) {
+			if isValue {
+				m.fieldPairs[pairIdx].valueInput, cmd = m.fieldPairs[pairIdx].valueInput.Update(msg)
+			} else {
+				m.fieldPairs[pairIdx].keyInput, cmd = m.fieldPairs[pairIdx].keyInput.Update(msg)
+			}
+		}
 	}
 	return m, cmd
 }
@@ -283,13 +364,28 @@ func (m SecretModal) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m SecretModal) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+
+	// Count navigable items: value (if non-empty) + fields.
+	itemCount := m.viewItemCount()
+
 	switch key {
-	case "p", " ":
-		m.valueMasked = !m.valueMasked
-	case "c":
-		if m.entry != nil && m.entry.Value != "" {
-			return m, m.copyValue()
+	case "j", "down":
+		if m.viewCursor < itemCount-1 {
+			m.viewCursor++
 		}
+	case "k", "up":
+		if m.viewCursor > 0 {
+			m.viewCursor--
+		}
+	case "p", " ":
+		// Toggle peek for the focused item.
+		if m.viewMasks == nil {
+			m.viewMasks = make(map[int]bool)
+		}
+		m.viewMasks[m.viewCursor] = !m.viewMasks[m.viewCursor]
+	case "c":
+		// Copy focused item value to clipboard.
+		return m, m.copyFocusedValue()
 	case "e":
 		if m.entry != nil {
 			m.mode = modalEdit
@@ -299,6 +395,14 @@ func (m SecretModal) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.envInput.SetValue(m.entry.Environment)
 			m.valueInput.SetValue(m.entry.Value)
 			m.metadataInput.SetValue(formatMetadataPlain(m.entry.Metadata))
+			// Populate field pairs.
+			m.fieldPairs = nil
+			if len(m.entry.Fields) > 0 {
+				keys := sortedFieldKeys(m.entry.Fields)
+				for _, k := range keys {
+					m.fieldPairs = append(m.fieldPairs, newFieldPair(k, m.entry.Fields[k]))
+				}
+			}
 			m.focusField = fieldName
 			m.focusCurrentField()
 			return m, textinput.Blink
@@ -309,6 +413,167 @@ func (m SecretModal) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// viewItemCount returns the number of navigable items in view mode.
+func (m SecretModal) viewItemCount() int {
+	count := 0
+	if m.entry != nil {
+		if m.entry.Value != "" {
+			count++ // main value
+		}
+		count += len(m.entry.Fields)
+	}
+	if count == 0 {
+		count = 1 // always at least 1 (even if empty)
+	}
+	return count
+}
+
+// copyFocusedValue returns a tea.Cmd that copies the currently focused view item.
+func (m SecretModal) copyFocusedValue() tea.Cmd {
+	if m.entry == nil {
+		return nil
+	}
+
+	var value, label string
+	hasValue := m.entry.Value != ""
+
+	if hasValue && m.viewCursor == 0 {
+		value = m.entry.Value
+		label = m.entry.Name
+	} else {
+		// Field value — cursor offset by 1 if main value exists.
+		fieldIdx := m.viewCursor
+		if hasValue {
+			fieldIdx--
+		}
+		keys := sortedFieldKeys(m.entry.Fields)
+		if fieldIdx >= 0 && fieldIdx < len(keys) {
+			key := keys[fieldIdx]
+			value = m.entry.Fields[key]
+			label = fmt.Sprintf("%s.%s", m.entry.Name, key)
+		}
+	}
+
+	if value == "" {
+		return nil
+	}
+
+	return func() tea.Msg {
+		if _, err := clipboard.CopyWithClear(value, 45*time.Second); err != nil {
+			return secretModalResultMsg{toast: fmt.Sprintf("clipboard: %s", err), kind: "error"}
+		}
+		return toastMsg{text: fmt.Sprintf("Copied %q to clipboard (clears in 45s)", label), kind: "success"}
+	}
+}
+
+// ── Edit/Add shared key handling ──────────────────────────────
+
+func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Block input during save or saved flash.
+	if m.saving || m.savedMsg != "" {
+		return m, nil
+	}
+
+	total := totalInputCount(len(m.fieldPairs))
+
+	switch {
+	case msg.Type == tea.KeyCtrlR:
+		// Toggle value visibility for the main value input or focused field value.
+		if m.focusField == fieldValue {
+			m.valueRevealed = !m.valueRevealed
+			if m.valueRevealed {
+				m.valueInput.EchoMode = textinput.EchoNormal
+			} else {
+				m.valueInput.EchoMode = textinput.EchoPassword
+			}
+		} else if m.focusField >= fixedFieldCount {
+			idx := m.focusField - fixedFieldCount
+			pairIdx := idx / 2
+			isValue := idx%2 == 1
+			if isValue && pairIdx >= 0 && pairIdx < len(m.fieldPairs) {
+				fp := &m.fieldPairs[pairIdx]
+				if fp.valueInput.EchoMode == textinput.EchoPassword {
+					fp.valueInput.EchoMode = textinput.EchoNormal
+				} else {
+					fp.valueInput.EchoMode = textinput.EchoPassword
+				}
+			}
+		}
+		return m, nil
+
+	case msg.Type == tea.KeyCtrlA:
+		// Add new field pair.
+		m.fieldPairs = append(m.fieldPairs, newFieldPair("", ""))
+		// Focus the new key input.
+		m.focusField = fixedFieldCount + (len(m.fieldPairs)-1)*2
+		m.focusCurrentField()
+		return m, textinput.Blink
+
+	case msg.Type == tea.KeyCtrlD:
+		// Delete focused field pair (only if focus is on a field pair).
+		if m.focusField >= fixedFieldCount && len(m.fieldPairs) > 0 {
+			idx := m.focusField - fixedFieldCount
+			pairIdx := idx / 2
+			if pairIdx >= 0 && pairIdx < len(m.fieldPairs) {
+				m.fieldPairs = append(m.fieldPairs[:pairIdx], m.fieldPairs[pairIdx+1:]...)
+				// Adjust focus.
+				newTotal := totalInputCount(len(m.fieldPairs))
+				if m.focusField >= newTotal {
+					m.focusField = newTotal - 1
+					if m.focusField < 0 {
+						m.focusField = fieldMetadata
+					}
+				}
+				m.focusCurrentField()
+				return m, textinput.Blink
+			}
+		}
+		return m, nil
+
+	case msg.Type == tea.KeyUp || msg.String() == "shift+tab":
+		m.focusField = (m.focusField - 1 + total) % total
+		m.focusCurrentField()
+		return m, textinput.Blink
+
+	case msg.Type == tea.KeyDown || msg.Type == tea.KeyTab:
+		m.focusField = (m.focusField + 1) % total
+		m.focusCurrentField()
+		return m, textinput.Blink
+
+	case msg.Type == tea.KeyEnter:
+		return m.saveSecret()
+
+	default:
+		return m.forwardKeyToInput(msg)
+	}
+}
+
+func (m SecretModal) forwardKeyToInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch {
+	case m.focusField == fieldName:
+		m.nameInput, cmd = m.nameInput.Update(msg)
+	case m.focusField == fieldEnv:
+		m.envInput, cmd = m.envInput.Update(msg)
+	case m.focusField == fieldValue:
+		m.valueInput, cmd = m.valueInput.Update(msg)
+	case m.focusField == fieldMetadata:
+		m.metadataInput, cmd = m.metadataInput.Update(msg)
+	case m.focusField >= fixedFieldCount:
+		idx := m.focusField - fixedFieldCount
+		pairIdx := idx / 2
+		isValue := idx%2 == 1
+		if pairIdx >= 0 && pairIdx < len(m.fieldPairs) {
+			if isValue {
+				m.fieldPairs[pairIdx].valueInput, cmd = m.fieldPairs[pairIdx].valueInput.Update(msg)
+			} else {
+				m.fieldPairs[pairIdx].keyInput, cmd = m.fieldPairs[pairIdx].keyInput.Update(msg)
+			}
+		}
+	}
+	return m, cmd
+}
+
 // ── Edit mode key handling ────────────────────────────────────
 
 func (m SecretModal) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -317,30 +582,7 @@ func (m SecretModal) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch {
-	case msg.Type == tea.KeyCtrlR:
-		m.valueRevealed = !m.valueRevealed
-		if m.valueRevealed {
-			m.valueInput.EchoMode = textinput.EchoNormal
-		} else {
-			m.valueInput.EchoMode = textinput.EchoPassword
-		}
-		return m, nil
-
-	case msg.Type == tea.KeyUp || msg.String() == "shift+tab":
-		m.focusField = (m.focusField - 1 + fieldCount) % fieldCount
-		m.focusCurrentField()
-		return m, textinput.Blink
-
-	case msg.Type == tea.KeyDown || msg.Type == tea.KeyTab:
-		m.focusField = (m.focusField + 1) % fieldCount
-		m.focusCurrentField()
-		return m, textinput.Blink
-
-	case msg.Type == tea.KeyEnter:
-		return m.saveSecret()
-
-	case msg.Type == tea.KeyEscape:
+	if msg.Type == tea.KeyEscape {
 		// If we came from view mode, go back to view.
 		if m.entry != nil {
 			m.mode = modalView
@@ -351,21 +593,9 @@ func (m SecretModal) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.closeModal()
-
-	default:
-		var cmd tea.Cmd
-		switch m.focusField {
-		case fieldName:
-			m.nameInput, cmd = m.nameInput.Update(msg)
-		case fieldEnv:
-			m.envInput, cmd = m.envInput.Update(msg)
-		case fieldValue:
-			m.valueInput, cmd = m.valueInput.Update(msg)
-		case fieldMetadata:
-			m.metadataInput, cmd = m.metadataInput.Update(msg)
-		}
-		return m, cmd
 	}
+
+	return m.handleFormKey(msg)
 }
 
 // ── Add mode key handling ─────────────────────────────────────
@@ -376,46 +606,11 @@ func (m SecretModal) handleAddKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch {
-	case msg.Type == tea.KeyCtrlR:
-		m.valueRevealed = !m.valueRevealed
-		if m.valueRevealed {
-			m.valueInput.EchoMode = textinput.EchoNormal
-		} else {
-			m.valueInput.EchoMode = textinput.EchoPassword
-		}
-		return m, nil
-
-	case msg.Type == tea.KeyUp || msg.String() == "shift+tab":
-		m.focusField = (m.focusField - 1 + fieldCount) % fieldCount
-		m.focusCurrentField()
-		return m, textinput.Blink
-
-	case msg.Type == tea.KeyDown || msg.Type == tea.KeyTab:
-		m.focusField = (m.focusField + 1) % fieldCount
-		m.focusCurrentField()
-		return m, textinput.Blink
-
-	case msg.Type == tea.KeyEnter:
-		return m.saveSecret()
-
-	case msg.Type == tea.KeyEscape:
+	if msg.Type == tea.KeyEscape {
 		return m.closeModal()
-
-	default:
-		var cmd tea.Cmd
-		switch m.focusField {
-		case fieldName:
-			m.nameInput, cmd = m.nameInput.Update(msg)
-		case fieldEnv:
-			m.envInput, cmd = m.envInput.Update(msg)
-		case fieldValue:
-			m.valueInput, cmd = m.valueInput.Update(msg)
-		case fieldMetadata:
-			m.metadataInput, cmd = m.metadataInput.Update(msg)
-		}
-		return m, cmd
 	}
+
+	return m.handleFormKey(msg)
 }
 
 // ── Actions ───────────────────────────────────────────────────
@@ -428,8 +623,20 @@ func (m SecretModal) saveSecret() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	value := m.valueInput.Value()
-	if value == "" {
-		m.toast = "Value cannot be empty"
+
+	// Collect field pairs.
+	fields := make(map[string]string)
+	for _, fp := range m.fieldPairs {
+		k := strings.TrimSpace(fp.keyInput.Value())
+		v := fp.valueInput.Value()
+		if k != "" {
+			fields[k] = v
+		}
+	}
+
+	// Must have at least a value or fields.
+	if value == "" && len(fields) == 0 {
+		m.toast = "Value or at least one field required"
 		m.toastKind = "error"
 		return m, nil
 	}
@@ -455,25 +662,80 @@ func (m SecretModal) saveSecret() (tea.Model, tea.Cmd) {
 				if err := v.Delete(ctx, origName, origEnv); err != nil {
 					return secretModalResultMsg{toast: err.Error(), kind: "error"}
 				}
-				if err := v.Set(ctx, name, env, value, metadata); err != nil {
-					return secretModalResultMsg{toast: err.Error(), kind: "error"}
+				if value != "" {
+					if err := v.Set(ctx, name, env, value, metadata); err != nil {
+						return secretModalResultMsg{toast: err.Error(), kind: "error"}
+					}
+				} else {
+					// Fields-only entry.
+					if err := v.SetField(ctx, name, env, "_placeholder", ""); err != nil {
+						return secretModalResultMsg{toast: err.Error(), kind: "error"}
+					}
+					// Delete the placeholder — SetField auto-creates the parent.
+					_ = v.DeleteField(ctx, name, env, "_placeholder")
 				}
 			} else {
 				// In-place edit: update value and metadata.
-				newValue := &value
-				if err := v.Edit(ctx, name, env, newValue, metadata); err != nil {
-					return secretModalResultMsg{toast: err.Error(), kind: "error"}
+				if value != "" {
+					newValue := &value
+					if err := v.Edit(ctx, name, env, newValue, metadata); err != nil {
+						return secretModalResultMsg{toast: err.Error(), kind: "error"}
+					}
 				}
 			}
+
+			// Sync fields: get current fields, delete removed, set new/changed.
+			if err := syncFields(ctx, v, name, env, fields); err != nil {
+				return secretModalResultMsg{toast: err.Error(), kind: "error"}
+			}
+
 			return secretModalResultMsg{saved: true, toast: fmt.Sprintf("Secret %q updated.", name), kind: "success"}
 		}
 
 		// Add mode.
-		if err := v.Set(ctx, name, env, value, metadata); err != nil {
-			return secretModalResultMsg{toast: err.Error(), kind: "error"}
+		if value != "" {
+			if err := v.Set(ctx, name, env, value, metadata); err != nil {
+				return secretModalResultMsg{toast: err.Error(), kind: "error"}
+			}
 		}
+
+		// Save fields.
+		if len(fields) > 0 {
+			if err := v.SetFields(ctx, name, env, fields); err != nil {
+				return secretModalResultMsg{toast: err.Error(), kind: "error"}
+			}
+		}
+
 		return secretModalResultMsg{saved: true, toast: fmt.Sprintf("Secret %q stored.", name), kind: "success"}
 	}
+}
+
+// syncFields reconciles the desired fields map with what's in the vault.
+func syncFields(ctx context.Context, v vault.Vault, name, env string, desired map[string]string) error {
+	// Get current fields.
+	current, err := v.GetFields(ctx, name, env)
+	if err != nil {
+		// Not found is OK — entry may have no fields yet.
+		current = nil
+	}
+
+	// Delete fields that were removed.
+	for key := range current {
+		if _, exists := desired[key]; !exists {
+			if err := v.DeleteField(ctx, name, env, key); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Set new/changed fields.
+	if len(desired) > 0 {
+		if err := v.SetFields(ctx, name, env, desired); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (m SecretModal) copyValue() tea.Cmd {
@@ -502,6 +764,10 @@ func (m *SecretModal) blurAll() {
 	m.envInput.Blur()
 	m.valueInput.Blur()
 	m.metadataInput.Blur()
+	for i := range m.fieldPairs {
+		m.fieldPairs[i].keyInput.Blur()
+		m.fieldPairs[i].valueInput.Blur()
+	}
 }
 
 // ── View ──────────────────────────────────────────────────────
@@ -530,16 +796,53 @@ func (m SecretModal) viewModeView() string {
 	b.WriteString(TitleStyle.Render(title))
 	b.WriteString("\n\n")
 
-	// Value.
-	b.WriteString("  " + MutedStyle.Render("Value       "))
-	if m.valueMasked {
-		b.WriteString(MaskedValueStyle.Render(maskValue(m.entry.Value)))
-	} else {
-		b.WriteString(SecretValueStyle.Render(m.entry.Value))
+	// Build navigable items: value (if present) + fields sorted by key.
+	hasValue := m.entry.Value != ""
+	itemIdx := 0
+
+	// Main value.
+	if hasValue {
+		cursor := "  "
+		if m.viewCursor == itemIdx {
+			cursor = AccentStyle.Render("▸ ")
+		}
+		b.WriteString(cursor + MutedStyle.Render("Value       "))
+		masked, _ := m.viewMasks[itemIdx]
+		if masked {
+			b.WriteString(MaskedValueStyle.Render(maskValue(m.entry.Value)))
+		} else {
+			b.WriteString(SecretValueStyle.Render(m.entry.Value))
+		}
+		b.WriteString("\n")
+		itemIdx++
 	}
-	b.WriteString("\n")
+
+	// Fields.
+	if len(m.entry.Fields) > 0 {
+		if hasValue {
+			b.WriteString("\n")
+		}
+		keys := sortedFieldKeys(m.entry.Fields)
+		for _, key := range keys {
+			cursor := "  "
+			if m.viewCursor == itemIdx {
+				cursor = AccentStyle.Render("▸ ")
+			}
+			label := padRight(key, 12)
+			b.WriteString(cursor + FieldKeyStyle.Render(label) + " ")
+			masked, _ := m.viewMasks[itemIdx]
+			if masked {
+				b.WriteString(MaskedValueStyle.Render(maskValue(m.entry.Fields[key])))
+			} else {
+				b.WriteString(SecretValueStyle.Render(m.entry.Fields[key]))
+			}
+			b.WriteString("\n")
+			itemIdx++
+		}
+	}
 
 	// Timestamps.
+	b.WriteString("\n")
 	if m.entry.CreatedAt != "" {
 		created := m.entry.CreatedAt
 		if len(created) > 16 {
@@ -565,9 +868,23 @@ func (m SecretModal) viewModeView() string {
 
 	b.WriteString("\n")
 
+	// Toast.
+	if m.toast != "" {
+		switch m.toastKind {
+		case "success":
+			b.WriteString("  " + ToastSuccessStyle.Render(" "+m.toast+" "))
+		case "error":
+			b.WriteString("  " + ToastErrorStyle.Render(" "+m.toast+" "))
+		default:
+			b.WriteString("  " + ToastInfoStyle.Render(" "+m.toast+" "))
+		}
+		b.WriteString("\n")
+	}
+
 	// Help bar.
 	var helpParts []string
 	helpParts = append(helpParts,
+		HelpKeyStyle.Render("↑/↓")+" "+HelpDescStyle.Render("navigate"),
 		HelpKeyStyle.Render("p")+" "+HelpDescStyle.Render("peek"),
 		HelpKeyStyle.Render("c")+" "+HelpDescStyle.Render("copy"),
 		HelpKeyStyle.Render("e")+" "+HelpDescStyle.Render("edit"),
@@ -599,8 +916,8 @@ func (m SecretModal) editModeView(titleText string) string {
 	b.WriteString(TitleStyle.Render(title))
 	b.WriteString("\n\n")
 
-	// Fields.
-	fields := []struct {
+	// Fixed fields.
+	fixedFields := []struct {
 		label string
 		input textinput.Model
 		idx   int
@@ -611,7 +928,7 @@ func (m SecretModal) editModeView(titleText string) string {
 		{"Metadata    ", m.metadataInput, fieldMetadata},
 	}
 
-	for _, f := range fields {
+	for _, f := range fixedFields {
 		cursor := "  "
 		labelStyle := MutedStyle
 		if m.focusField == f.idx {
@@ -624,6 +941,41 @@ func (m SecretModal) editModeView(titleText string) string {
 		}
 		b.WriteString(cursor + labelStyle.Render(f.label) + extra + " " + f.input.View())
 		b.WriteString("\n")
+	}
+
+	// Dynamic field pairs.
+	if len(m.fieldPairs) > 0 {
+		b.WriteString("\n")
+		b.WriteString("  " + MutedStyle.Render("── Fields ──────────────────"))
+		b.WriteString("\n")
+		for i, fp := range m.fieldPairs {
+			keyFocusIdx := fixedFieldCount + i*2
+			valFocusIdx := fixedFieldCount + i*2 + 1
+
+			// Key input.
+			cursor := "  "
+			labelStyle := MutedStyle
+			if m.focusField == keyFocusIdx {
+				cursor = AccentStyle.Render("▸ ")
+				labelStyle = AccentStyle
+			}
+			b.WriteString(cursor + labelStyle.Render(fmt.Sprintf("Key %-2d      ", i+1)) + " " + fp.keyInput.View())
+			b.WriteString("\n")
+
+			// Value input.
+			cursor = "  "
+			labelStyle = MutedStyle
+			if m.focusField == valFocusIdx {
+				cursor = AccentStyle.Render("▸ ")
+				labelStyle = AccentStyle
+			}
+			extra := ""
+			if m.focusField == valFocusIdx && fp.valueInput.EchoMode == textinput.EchoNormal {
+				extra = MutedStyle.Render(" (visible)")
+			}
+			b.WriteString(cursor + labelStyle.Render(fmt.Sprintf("Val %-2d      ", i+1)) + extra + " " + fp.valueInput.View())
+			b.WriteString("\n")
+		}
 	}
 
 	// Toast (inline error).
@@ -652,6 +1004,14 @@ func (m SecretModal) editModeView(titleText string) string {
 		helpParts = append(helpParts,
 			HelpKeyStyle.Render("↑/↓")+" "+HelpDescStyle.Render("navigate"),
 			HelpKeyStyle.Render("ctrl+r")+" "+HelpDescStyle.Render("peek"),
+			HelpKeyStyle.Render("ctrl+a")+" "+HelpDescStyle.Render("add field"),
+		)
+		if len(m.fieldPairs) > 0 {
+			helpParts = append(helpParts,
+				HelpKeyStyle.Render("ctrl+d")+" "+HelpDescStyle.Render("del field"),
+			)
+		}
+		helpParts = append(helpParts,
 			HelpKeyStyle.Render("enter")+" "+HelpDescStyle.Render("save"),
 			HelpKeyStyle.Render("esc")+" "+HelpDescStyle.Render("cancel"),
 		)
@@ -678,4 +1038,19 @@ func (m SecretModal) centerStandalone(content string) string {
 		topPad = (h - contentHeight) / 3
 	}
 	return strings.Repeat("\n", topPad) + content
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+
+// sortedFieldKeys returns the keys of a string map in sorted order.
+func sortedFieldKeys(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

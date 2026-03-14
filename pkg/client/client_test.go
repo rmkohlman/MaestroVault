@@ -454,3 +454,195 @@ func TestEnvironmentScoping(t *testing.T) {
 
 	_ = c.Delete(name, "prod")
 }
+
+// ── Fields (full CRUD cycle) ──────────────────────────────────
+
+func TestFieldsCRUD(t *testing.T) {
+	c := testClient(t)
+	t.Cleanup(func() { cleanup(t, c) })
+
+	name := testPrefix + "fields"
+	env := "test"
+
+	// SetField on a non-existent secret should auto-create the parent.
+	if err := c.SetField(name, env, "host", "db.example.com"); err != nil {
+		t.Fatalf("SetField (host): %v", err)
+	}
+	if err := c.SetField(name, env, "port", "5432"); err != nil {
+		t.Fatalf("SetField (port): %v", err)
+	}
+
+	// GetField
+	val, err := c.GetField(name, env, "host")
+	if err != nil {
+		t.Fatalf("GetField (host): %v", err)
+	}
+	if val != "db.example.com" {
+		t.Errorf("GetField (host) = %q, want \"db.example.com\"", val)
+	}
+
+	// GetFields — should return all fields
+	fields, err := c.GetFields(name, env)
+	if err != nil {
+		t.Fatalf("GetFields: %v", err)
+	}
+	if len(fields) != 2 {
+		t.Errorf("GetFields: got %d fields, want 2", len(fields))
+	}
+	if fields["host"] != "db.example.com" {
+		t.Errorf("GetFields[host] = %q, want \"db.example.com\"", fields["host"])
+	}
+	if fields["port"] != "5432" {
+		t.Errorf("GetFields[port] = %q, want \"5432\"", fields["port"])
+	}
+
+	// Get full secret — should include fields and field_count
+	entry, err := c.Get(name, env)
+	if err != nil {
+		t.Fatalf("Get (with fields): %v", err)
+	}
+	if entry.FieldCount != 2 {
+		t.Errorf("Get.FieldCount = %d, want 2", entry.FieldCount)
+	}
+	if len(entry.Fields) != 2 {
+		t.Errorf("Get.Fields has %d entries, want 2", len(entry.Fields))
+	}
+	t.Logf("Fields CRUD: set/get OK, count=%d", entry.FieldCount)
+
+	// Update an existing field
+	if err := c.SetField(name, env, "port", "3306"); err != nil {
+		t.Fatalf("SetField (update port): %v", err)
+	}
+	val, err = c.GetField(name, env, "port")
+	if err != nil {
+		t.Fatalf("GetField (updated port): %v", err)
+	}
+	if val != "3306" {
+		t.Errorf("Updated port = %q, want \"3306\"", val)
+	}
+
+	// DeleteField
+	if err := c.DeleteField(name, env, "port"); err != nil {
+		t.Fatalf("DeleteField: %v", err)
+	}
+
+	// Verify deleted — GetField should fail
+	_, err = c.GetField(name, env, "port")
+	if err == nil {
+		t.Error("GetField after delete: expected error, got nil")
+	}
+
+	// Remaining fields should be just "host"
+	fields, err = c.GetFields(name, env)
+	if err != nil {
+		t.Fatalf("GetFields after delete: %v", err)
+	}
+	if len(fields) != 1 {
+		t.Errorf("GetFields after delete: got %d fields, want 1", len(fields))
+	}
+
+	t.Log("Fields CRUD: update, delete, verify OK")
+
+	_ = c.Delete(name, env)
+}
+
+// ── SetFields (batch) ─────────────────────────────────────────
+
+func TestSetFieldsBatch(t *testing.T) {
+	c := testClient(t)
+	t.Cleanup(func() { cleanup(t, c) })
+
+	name := testPrefix + "batchfields"
+	env := "test"
+
+	// Batch set multiple fields
+	batch := map[string]string{
+		"username": "admin",
+		"password": "s3cret",
+		"host":     "10.0.0.1",
+	}
+	if err := c.SetFields(name, env, batch); err != nil {
+		t.Fatalf("SetFields: %v", err)
+	}
+
+	// Verify all were stored
+	fields, err := c.GetFields(name, env)
+	if err != nil {
+		t.Fatalf("GetFields: %v", err)
+	}
+	if len(fields) != 3 {
+		t.Errorf("GetFields: got %d fields, want 3", len(fields))
+	}
+	for k, want := range batch {
+		if got := fields[k]; got != want {
+			t.Errorf("Field %q = %q, want %q", k, got, want)
+		}
+	}
+	t.Logf("SetFields batch OK: %d fields", len(fields))
+
+	_ = c.Delete(name, env)
+}
+
+// ── Fields-only entry (no main value) ─────────────────────────
+
+func TestFieldsOnlyEntry(t *testing.T) {
+	c := testClient(t)
+	t.Cleanup(func() { cleanup(t, c) })
+
+	name := testPrefix + "fieldsonly"
+	env := "test"
+
+	// Create via SetField — parent has no main value
+	if err := c.SetField(name, env, "key1", "val1"); err != nil {
+		t.Fatalf("SetField: %v", err)
+	}
+
+	// Get full secret — value should be empty, fields present
+	entry, err := c.Get(name, env)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if entry.Value != "" {
+		t.Errorf("Value = %q, want empty (fields-only entry)", entry.Value)
+	}
+	if entry.FieldCount != 1 {
+		t.Errorf("FieldCount = %d, want 1", entry.FieldCount)
+	}
+	if entry.Fields["key1"] != "val1" {
+		t.Errorf("Fields[key1] = %q, want \"val1\"", entry.Fields["key1"])
+	}
+	t.Log("Fields-only entry OK: no main value, fields present")
+
+	_ = c.Delete(name, env)
+}
+
+// ── Deleting parent cascades to fields ────────────────────────
+
+func TestDeleteCascadesFields(t *testing.T) {
+	c := testClient(t)
+	t.Cleanup(func() { cleanup(t, c) })
+
+	name := testPrefix + "cascade"
+	env := "test"
+
+	// Create parent with value and fields
+	if err := c.Set(name, env, "main-value", nil); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := c.SetField(name, env, "f1", "v1"); err != nil {
+		t.Fatalf("SetField: %v", err)
+	}
+
+	// Delete the entire secret
+	if err := c.Delete(name, env); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Parent should be gone
+	_, err := c.Get(name, env)
+	if err == nil {
+		t.Fatal("Get after cascade delete: expected error, got nil")
+	}
+
+	t.Log("Cascade delete OK: parent + fields removed")
+}

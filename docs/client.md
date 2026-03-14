@@ -100,6 +100,58 @@ err := c.Edit("name", "prod", &newVal, nil) // nil metadata = keep existing
 err := c.Delete("name", "prod")
 ```
 
+## Fields
+
+Secrets can have individually encrypted key-value fields in addition to (or instead of) the main value.
+
+### SetField
+
+Set a single field on a secret. Creates the parent secret if it doesn't exist.
+
+```go
+err := c.SetField("db-creds", "prod", "host", "db.example.com")
+```
+
+### GetField
+
+Retrieve a single decrypted field.
+
+```go
+value, err := c.GetField("db-creds", "prod", "host")
+fmt.Println(value) // "db.example.com"
+```
+
+### GetFields
+
+Retrieve all fields for a secret.
+
+```go
+fields, err := c.GetFields("db-creds", "prod")
+for key, value := range fields {
+    fmt.Printf("%s = %s\n", key, value)
+}
+```
+
+### SetFields
+
+Set multiple fields at once. Creates the parent secret if it doesn't exist.
+
+```go
+err := c.SetFields("db-creds", "prod", map[string]string{
+    "host":     "db.example.com",
+    "port":     "5432",
+    "username": "admin",
+})
+```
+
+### DeleteField
+
+Delete a single field from a secret.
+
+```go
+err := c.DeleteField("db-creds", "prod", "port")
+```
+
 ## Search
 
 ```go
@@ -178,12 +230,24 @@ if err != nil {
 
 ```go
 type SecretEntry struct {
-    Name        string         `json:"name"`
-    Environment string         `json:"environment"`
-    Value       string         `json:"value,omitempty"`
-    Metadata    map[string]any `json:"metadata,omitempty"`
-    CreatedAt   string         `json:"created_at"`
-    UpdatedAt   string         `json:"updated_at"`
+    Name        string            `json:"name"`
+    Environment string            `json:"environment"`
+    Value       string            `json:"value,omitempty"`
+    Metadata    map[string]any    `json:"metadata,omitempty"`
+    Fields      map[string]string `json:"fields,omitempty"`
+    FieldCount  int               `json:"field_count,omitempty"`
+    CreatedAt   string            `json:"created_at"`
+    UpdatedAt   string            `json:"updated_at"`
+}
+```
+
+### FieldResponse
+
+```go
+type FieldResponse struct {
+    Name  string `json:"name"`
+    Field string `json:"field"`
+    Value string `json:"value"`
 }
 ```
 

@@ -160,6 +160,13 @@ func (s *Server) buildMux() http.Handler {
 	authed.Handle("PATCH /v1/secrets/{name}", requireScope(ScopeWrite)(http.HandlerFunc(s.handleEditSecret)))
 	authed.Handle("DELETE /v1/secrets/{name}", requireScope(ScopeWrite)(http.HandlerFunc(s.handleDeleteSecret)))
 
+	// Secret fields.
+	authed.Handle("GET /v1/secrets/{name}/fields", requireScope(ScopeRead)(http.HandlerFunc(s.handleGetFields)))
+	authed.Handle("PUT /v1/secrets/{name}/fields", requireScope(ScopeWrite)(http.HandlerFunc(s.handleSetFields)))
+	authed.Handle("GET /v1/secrets/{name}/fields/{field}", requireScope(ScopeRead)(http.HandlerFunc(s.handleGetField)))
+	authed.Handle("PUT /v1/secrets/{name}/fields/{field}", requireScope(ScopeWrite)(http.HandlerFunc(s.handleSetField)))
+	authed.Handle("DELETE /v1/secrets/{name}/fields/{field}", requireScope(ScopeWrite)(http.HandlerFunc(s.handleDeleteField)))
+
 	// Search.
 	authed.Handle("GET /v1/search", requireScope(ScopeRead)(http.HandlerFunc(s.handleSearch)))
 

@@ -152,4 +152,12 @@ var (
 			Bold(true)
 	GenCheckOffStyle = lipgloss.NewStyle().
 				Foreground(ColorMuted)
+
+	// Field key style (used in view/edit modals for secret fields).
+	FieldKeyStyle = lipgloss.NewStyle().
+			Foreground(ColorMagenta).
+			Bold(true)
+	// Field count badge shown in list view.
+	FieldCountStyle = lipgloss.NewStyle().
+			Foreground(ColorBrightBlack)
 )

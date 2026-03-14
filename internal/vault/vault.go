@@ -47,20 +47,23 @@ var (
 // SecretEntry represents a decrypted secret returned to callers.
 // Used by List, Get, Search, and ListByMetadata.
 type SecretEntry struct {
-	Name        string         `json:"name"`
-	Environment string         `json:"environment"`
-	Value       string         `json:"value,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   string         `json:"updated_at"`
+	Name        string            `json:"name"`
+	Environment string            `json:"environment"`
+	Value       string            `json:"value,omitempty"`
+	Fields      map[string]string `json:"fields,omitempty"`
+	FieldCount  int               `json:"field_count,omitempty"`
+	Metadata    map[string]any    `json:"metadata,omitempty"`
+	CreatedAt   string            `json:"created_at"`
+	UpdatedAt   string            `json:"updated_at"`
 }
 
 // ExportEntry represents a single secret for export/import operations.
 type ExportEntry struct {
-	Name        string         `json:"name"`
-	Environment string         `json:"environment,omitempty"`
-	Value       string         `json:"value"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Name        string            `json:"name"`
+	Environment string            `json:"environment,omitempty"`
+	Value       string            `json:"value,omitempty"`
+	Fields      map[string]string `json:"fields,omitempty"`
+	Metadata    map[string]any    `json:"metadata,omitempty"`
 }
 
 // VaultInfo contains metadata about the vault.
@@ -118,6 +121,25 @@ type Vault interface {
 
 	// Info returns metadata about the vault (path, size, count).
 	Info(ctx context.Context) (*VaultInfo, error)
+
+	// ── Field operations ─────────────────────────────────────
+
+	// SetField encrypts and stores a single field within a secret.
+	// Auto-creates the parent entry if it doesn't exist.
+	SetField(ctx context.Context, name, env, fieldKey, value string) error
+
+	// GetField retrieves and decrypts a single field by key.
+	GetField(ctx context.Context, name, env, fieldKey string) (string, error)
+
+	// GetFields retrieves and decrypts all fields for a secret.
+	GetFields(ctx context.Context, name, env string) (map[string]string, error)
+
+	// SetFields encrypts and stores multiple fields at once.
+	// Auto-creates the parent entry if it doesn't exist.
+	SetFields(ctx context.Context, name, env string, fields map[string]string) error
+
+	// DeleteField removes a single field from a secret.
+	DeleteField(ctx context.Context, name, env, fieldKey string) error
 
 	// Names returns all (name, environment) pairs for shell completions.
 	Names(ctx context.Context) ([]NameEntry, error)
@@ -206,6 +228,9 @@ func (svc *Service) Set(ctx context.Context, name, env, value string, metadata m
 }
 
 // Get retrieves and decrypts a secret by name and environment.
+// For entries with a value, decrypts the value.
+// For entries with fields, decrypts all fields.
+// An entry can have both, either, or neither (though neither is unusual).
 func (svc *Service) Get(ctx context.Context, name, env string) (*SecretEntry, error) {
 	// Fetch encrypted secret from store.
 	secret, err := svc.store.Get(ctx, name, env)
@@ -219,29 +244,38 @@ func (svc *Service) Get(ctx context.Context, name, env string) (*SecretEntry, er
 		return nil, fmt.Errorf("retrieving master key: %w", err)
 	}
 
-	// Decrypt the data key using the master key.
-	dataKey, err := svc.crypto.DecryptDataKey(ctx, secret.EncryptedDataKey, masterKey)
-	if err != nil {
-		return nil, fmt.Errorf("decrypting data key: %w", err)
-	}
-
-	// Decrypt the secret value using the data key.
-	plaintext, err := svc.crypto.Decrypt(ctx, secret.EncryptedSecret, dataKey)
-	if err != nil {
-		return nil, fmt.Errorf("decrypting secret: %w", err)
-	}
-
-	// Parse metadata.
-	metadata := parseMetadata(secret.Metadata)
-
-	return &SecretEntry{
+	entry := &SecretEntry{
 		Name:        secret.Name,
 		Environment: secret.Environment,
-		Value:       string(plaintext),
-		Metadata:    metadata,
+		Metadata:    parseMetadata(secret.Metadata),
 		CreatedAt:   secret.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:   secret.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-	}, nil
+	}
+
+	// Decrypt value only if present (nullable for fields-only entries).
+	if secret.EncryptedSecret != nil && secret.EncryptedDataKey != nil {
+		dataKey, err := svc.crypto.DecryptDataKey(ctx, secret.EncryptedDataKey, masterKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting data key: %w", err)
+		}
+		plaintext, err := svc.crypto.Decrypt(ctx, secret.EncryptedSecret, dataKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting secret: %w", err)
+		}
+		entry.Value = string(plaintext)
+	}
+
+	// Decrypt all fields.
+	fields, err := svc.decryptFields(ctx, name, env, masterKey)
+	if err != nil {
+		return nil, err
+	}
+	if len(fields) > 0 {
+		entry.Fields = fields
+		entry.FieldCount = len(fields)
+	}
+
+	return entry, nil
 }
 
 // List returns metadata for all secrets (values not decrypted).
@@ -333,26 +367,35 @@ func (svc *Service) Export(ctx context.Context) ([]ExportEntry, error) {
 
 	entries := make([]ExportEntry, 0, len(secrets))
 	for _, s := range secrets {
-		// Decrypt data key.
-		dataKey, err := svc.crypto.DecryptDataKey(ctx, s.EncryptedDataKey, masterKey)
-		if err != nil {
-			return nil, fmt.Errorf("decrypting data key for %q: %w", s.Name, err)
-		}
-
-		// Decrypt value.
-		plaintext, err := svc.crypto.Decrypt(ctx, s.EncryptedSecret, dataKey)
-		if err != nil {
-			return nil, fmt.Errorf("decrypting secret %q: %w", s.Name, err)
-		}
-
-		metadata := parseMetadata(s.Metadata)
-
-		entries = append(entries, ExportEntry{
+		e := ExportEntry{
 			Name:        s.Name,
 			Environment: s.Environment,
-			Value:       string(plaintext),
-			Metadata:    metadata,
-		})
+			Metadata:    parseMetadata(s.Metadata),
+		}
+
+		// Decrypt value only if present (nullable for fields-only entries).
+		if s.EncryptedSecret != nil && s.EncryptedDataKey != nil {
+			dataKey, err := svc.crypto.DecryptDataKey(ctx, s.EncryptedDataKey, masterKey)
+			if err != nil {
+				return nil, fmt.Errorf("decrypting data key for %q: %w", s.Name, err)
+			}
+			plaintext, err := svc.crypto.Decrypt(ctx, s.EncryptedSecret, dataKey)
+			if err != nil {
+				return nil, fmt.Errorf("decrypting secret %q: %w", s.Name, err)
+			}
+			e.Value = string(plaintext)
+		}
+
+		// Decrypt all fields.
+		fields, err := svc.decryptFields(ctx, s.Name, s.Environment, masterKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting fields for %q: %w", s.Name, err)
+		}
+		if len(fields) > 0 {
+			e.Fields = fields
+		}
+
+		entries = append(entries, e)
 	}
 
 	return entries, nil
@@ -365,8 +408,22 @@ func (svc *Service) Import(ctx context.Context, entries []ExportEntry) (int, err
 		if entry.Name == "" {
 			continue
 		}
-		if err := svc.Set(ctx, entry.Name, entry.Environment, entry.Value, entry.Metadata); err != nil {
-			return count, fmt.Errorf("importing %q: %w", entry.Name, err)
+		// Import value if present.
+		if entry.Value != "" {
+			if err := svc.Set(ctx, entry.Name, entry.Environment, entry.Value, entry.Metadata); err != nil {
+				return count, fmt.Errorf("importing %q: %w", entry.Name, err)
+			}
+		} else if len(entry.Fields) > 0 {
+			// Fields-only entry — ensure parent exists with metadata.
+			if err := svc.store.EnsureEntry(ctx, entry.Name, entry.Environment, mustMarshalMetadata(entry.Metadata)); err != nil {
+				return count, fmt.Errorf("importing %q: %w", entry.Name, err)
+			}
+		}
+		// Import fields if present.
+		if len(entry.Fields) > 0 {
+			if err := svc.SetFields(ctx, entry.Name, entry.Environment, entry.Fields); err != nil {
+				return count, fmt.Errorf("importing fields for %q: %w", entry.Name, err)
+			}
 		}
 		count++
 	}
@@ -426,6 +483,138 @@ func (svc *Service) Count(ctx context.Context) (int, error) {
 	return svc.store.Count(ctx)
 }
 
+// ── Field operations ─────────────────────────────────────────
+
+// SetField encrypts and stores a single field within a secret.
+// Auto-creates the parent entry if it doesn't exist.
+func (svc *Service) SetField(ctx context.Context, name, env, fieldKey, value string) error {
+	if name == "" {
+		return errors.New("secret name cannot be empty")
+	}
+	if fieldKey == "" {
+		return errors.New("field key cannot be empty")
+	}
+
+	masterKey, err := svc.keychain.RetrieveMasterKey()
+	if err != nil {
+		return fmt.Errorf("retrieving master key: %w", err)
+	}
+
+	// Ensure parent entry exists (no-op if it already does).
+	if err := svc.store.EnsureEntry(ctx, name, env, nil); err != nil {
+		return fmt.Errorf("ensuring parent entry: %w", err)
+	}
+
+	// Per-field envelope encryption: unique data key per field.
+	dataKey, err := svc.crypto.GenerateKey(ctx)
+	if err != nil {
+		return fmt.Errorf("generating field data key: %w", err)
+	}
+
+	encValue, err := svc.crypto.Encrypt(ctx, []byte(value), dataKey)
+	if err != nil {
+		return fmt.Errorf("encrypting field value: %w", err)
+	}
+
+	encDataKey, err := svc.crypto.EncryptDataKey(ctx, dataKey, masterKey)
+	if err != nil {
+		return fmt.Errorf("encrypting field data key: %w", err)
+	}
+
+	if err := svc.store.PutField(ctx, name, env, fieldKey, encValue, encDataKey); err != nil {
+		return fmt.Errorf("storing field: %w", err)
+	}
+
+	return nil
+}
+
+// GetField retrieves and decrypts a single field by key.
+func (svc *Service) GetField(ctx context.Context, name, env, fieldKey string) (string, error) {
+	field, err := svc.store.GetField(ctx, name, env, fieldKey)
+	if err != nil {
+		return "", err
+	}
+
+	masterKey, err := svc.keychain.RetrieveMasterKey()
+	if err != nil {
+		return "", fmt.Errorf("retrieving master key: %w", err)
+	}
+
+	dataKey, err := svc.crypto.DecryptDataKey(ctx, field.EncryptedDataKey, masterKey)
+	if err != nil {
+		return "", fmt.Errorf("decrypting field data key: %w", err)
+	}
+
+	plaintext, err := svc.crypto.Decrypt(ctx, field.EncryptedValue, dataKey)
+	if err != nil {
+		return "", fmt.Errorf("decrypting field value: %w", err)
+	}
+
+	return string(plaintext), nil
+}
+
+// GetFields retrieves and decrypts all fields for a secret.
+func (svc *Service) GetFields(ctx context.Context, name, env string) (map[string]string, error) {
+	masterKey, err := svc.keychain.RetrieveMasterKey()
+	if err != nil {
+		return nil, fmt.Errorf("retrieving master key: %w", err)
+	}
+	return svc.decryptFields(ctx, name, env, masterKey)
+}
+
+// SetFields encrypts and stores multiple fields at once.
+// Auto-creates the parent entry if it doesn't exist.
+func (svc *Service) SetFields(ctx context.Context, name, env string, fields map[string]string) error {
+	if name == "" {
+		return errors.New("secret name cannot be empty")
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+
+	masterKey, err := svc.keychain.RetrieveMasterKey()
+	if err != nil {
+		return fmt.Errorf("retrieving master key: %w", err)
+	}
+
+	// Ensure parent entry exists.
+	if err := svc.store.EnsureEntry(ctx, name, env, nil); err != nil {
+		return fmt.Errorf("ensuring parent entry: %w", err)
+	}
+
+	for fk, fv := range fields {
+		if fk == "" {
+			continue
+		}
+
+		dataKey, err := svc.crypto.GenerateKey(ctx)
+		if err != nil {
+			return fmt.Errorf("generating field data key for %q: %w", fk, err)
+		}
+
+		encValue, err := svc.crypto.Encrypt(ctx, []byte(fv), dataKey)
+		if err != nil {
+			return fmt.Errorf("encrypting field %q: %w", fk, err)
+		}
+
+		encDataKey, err := svc.crypto.EncryptDataKey(ctx, dataKey, masterKey)
+		if err != nil {
+			return fmt.Errorf("encrypting data key for field %q: %w", fk, err)
+		}
+
+		if err := svc.store.PutField(ctx, name, env, fk, encValue, encDataKey); err != nil {
+			return fmt.Errorf("storing field %q: %w", fk, err)
+		}
+	}
+
+	return nil
+}
+
+// DeleteField removes a single field from a secret.
+func (svc *Service) DeleteField(ctx context.Context, name, env, fieldKey string) error {
+	return svc.store.DeleteField(ctx, name, env, fieldKey)
+}
+
 // Close releases all resources.
 func (svc *Service) Close() error {
 	return svc.store.Close()
@@ -439,13 +628,15 @@ func (svc *Service) DB() *sql.DB {
 // ── Helper methods ───────────────────────────────────────────
 
 // toEntries converts store.Secret slice to SecretEntry slice without decryption.
-// Value is left empty; metadata is parsed from JSON.
+// Value is left empty; metadata is parsed from JSON. Field counts are fetched.
 func (svc *Service) toEntries(secrets []store.Secret) []SecretEntry {
 	entries := make([]SecretEntry, len(secrets))
 	for i, s := range secrets {
+		fc, _ := svc.store.FieldCount(context.Background(), s.Name, s.Environment)
 		entries[i] = SecretEntry{
 			Name:        s.Name,
 			Environment: s.Environment,
+			FieldCount:  fc,
 			Metadata:    parseMetadata(s.Metadata),
 			CreatedAt:   s.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			UpdatedAt:   s.UpdatedAt.Format("2006-01-02T15:04:05Z"),
@@ -468,6 +659,45 @@ func parseMetadata(raw json.RawMessage) map[string]any {
 		return map[string]any{}
 	}
 	return m
+}
+
+// decryptFields fetches and decrypts all fields for a secret.
+// masterKey is passed in to avoid redundant keychain lookups in bulk operations.
+func (svc *Service) decryptFields(ctx context.Context, name, env string, masterKey []byte) (map[string]string, error) {
+	encFields, err := svc.store.ListFields(ctx, name, env)
+	if err != nil {
+		return nil, fmt.Errorf("listing fields for %q: %w", name, err)
+	}
+	if len(encFields) == 0 {
+		return nil, nil
+	}
+
+	fields := make(map[string]string, len(encFields))
+	for _, f := range encFields {
+		dataKey, err := svc.crypto.DecryptDataKey(ctx, f.EncryptedDataKey, masterKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting data key for field %q: %w", f.FieldKey, err)
+		}
+		plaintext, err := svc.crypto.Decrypt(ctx, f.EncryptedValue, dataKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting field %q: %w", f.FieldKey, err)
+		}
+		fields[f.FieldKey] = string(plaintext)
+	}
+	return fields, nil
+}
+
+// mustMarshalMetadata marshals metadata to json.RawMessage.
+// Returns nil if metadata is nil (letting the store use its default).
+func mustMarshalMetadata(metadata map[string]any) json.RawMessage {
+	if metadata == nil {
+		return nil
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(data)
 }
 
 // ── Convenience functions ────────────────────────────────────

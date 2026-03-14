@@ -119,10 +119,18 @@ GET /v1/secrets/{name}
   "environment": "prod",
   "value": "s3cret",
   "metadata": {"service": "postgres"},
+  "fields": {
+    "host": "db.example.com",
+    "port": "5432",
+    "username": "admin"
+  },
+  "field_count": 3,
   "created_at": "2026-03-13T10:00:00Z",
   "updated_at": "2026-03-13T10:00:00Z"
 }
 ```
+
+The `value` field is omitted if the secret has no main value (fields-only entry). `fields` and `field_count` are omitted when there are no fields.
 
 ---
 
@@ -221,11 +229,160 @@ DELETE /v1/secrets/{name}
 
 ---
 
-### Search
+### Secret Fields
+
+Secrets can have an optional set of individually encrypted key-value fields in addition to (or instead of) the main value. Field keys are plaintext; field values are encrypted with per-field envelope encryption.
+
+#### Set a Single Field
 
 ```
-GET /v1/search?q={query}
+PUT /v1/secrets/{name}/fields/{field}
 ```
+
+**Scope:** `write`
+
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
+**Request Body:**
+
+```json
+{
+  "value": "field-value"
+}
+```
+
+If the parent secret does not exist, it is created automatically (with no main value).
+
+**Response (201):**
+
+```json
+{
+  "status": "stored",
+  "name": "my-secret",
+  "field": "username"
+}
+```
+
+#### Get a Single Field
+
+```
+GET /v1/secrets/{name}/fields/{field}
+```
+
+**Scope:** `read`
+
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
+**Response:**
+
+```json
+{
+  "name": "my-secret",
+  "field": "username",
+  "value": "admin"
+}
+```
+
+#### Get All Fields
+
+```
+GET /v1/secrets/{name}/fields
+```
+
+**Scope:** `read`
+
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
+**Response:**
+
+```json
+{
+  "host": "db.example.com",
+  "port": "5432",
+  "username": "admin"
+}
+```
+
+Returns a JSON object mapping field keys to their decrypted values. Returns an empty object `{}` if no fields exist.
+```
+
+#### Set Multiple Fields
+
+```
+PUT /v1/secrets/{name}/fields
+```
+
+**Scope:** `write`
+
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
+**Request Body:**
+
+```json
+{
+  "fields": {
+    "host": "db.example.com",
+    "port": "5432",
+    "username": "admin"
+  }
+}
+```
+
+Creates or updates multiple fields at once. If the parent secret does not exist, it is created automatically.
+
+**Response (201):**
+
+```json
+{
+  "status": "stored",
+  "name": "my-secret",
+  "field_count": 3
+}
+```
+
+#### Delete a Field
+
+```
+DELETE /v1/secrets/{name}/fields/{field}
+```
+
+**Scope:** `write`
+
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
+**Response:**
+
+```json
+{
+  "status": "deleted",
+  "name": "my-secret",
+  "field": "username"
+}
+```
+
+---
+
+### Search
 
 **Scope:** `read`
 

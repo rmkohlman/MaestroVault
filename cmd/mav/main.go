@@ -226,6 +226,7 @@ func newInitCmd() *cobra.Command {
 func newSetCmd() *cobra.Command {
 	var (
 		valueFlag  string
+		field      string
 		metadata   []string
 		generatePw bool
 		genLength  int
@@ -236,11 +237,31 @@ func newSetCmd() *cobra.Command {
 		Use:   "set <name>",
 		Short: "Store a secret",
 		Long: `Encrypts and stores a secret. Value can be provided via:
-  --value flag, --generate flag (auto-generate password), stdin, or interactive popup.`,
+  --value flag, --generate flag (auto-generate password), stdin, or interactive popup.
+
+Use --field to set a named field within a secret entry:
+  mav set aws-creds --field access_key_id --value AKIA...`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+
+			// Field mode: store a single named field.
+			if field != "" {
+				if valueFlag == "" {
+					printError("--value is required when using --field.", "")
+					return fmt.Errorf("empty field value")
+				}
+				return withVault(func(ctx context.Context, v vault.Vault) error {
+					env, _ := cmd.Flags().GetString("env")
+					if err := v.SetField(ctx, name, env, field, valueFlag); err != nil {
+						printError(err.Error(), "")
+						return err
+					}
+					printSuccess(fmt.Sprintf("Field %q stored on secret %q.", field, name))
+					return nil
+				})
+			}
 
 			var value string
 			switch {
@@ -310,6 +331,7 @@ func newSetCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "Secret value (visible in process list; omit for interactive popup)")
+	cmd.Flags().StringVar(&field, "field", "", "Set a named field instead of the main value")
 	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "Metadata as key=value (repeatable)")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	cmd.Flags().BoolVarP(&generatePw, "generate", "g", false, "Auto-generate a random password as the value")
@@ -324,17 +346,63 @@ func newGetCmd() *cobra.Command {
 		quiet    bool
 		clip     bool
 		printRaw bool
+		field    string
 	)
 
 	cmd := &cobra.Command{
-		Use:               "get <name>",
-		Short:             "Retrieve a secret",
-		Long:              "Decrypts and displays a stored secret. Opens an interactive popup when run in a terminal.",
+		Use:   "get <name>",
+		Short: "Retrieve a secret",
+		Long: `Decrypts and displays a stored secret. Opens an interactive popup when run in a terminal.
+
+Use --field to retrieve a single named field:
+  mav get aws-creds --field access_key_id`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				env, _ := cmd.Flags().GetString("env")
+
+				// Field mode: get a single named field value.
+				if field != "" {
+					envExplicit := cmd.Flags().Changed("env")
+					resolvedEnv, err := resolveSecretEnv(ctx, v, args[0], env, envExplicit)
+					if err != nil {
+						printError(err.Error(), "Use 'mav list' to see available secrets.")
+						return err
+					}
+
+					value, err := v.GetField(ctx, args[0], resolvedEnv, field)
+					if err != nil {
+						printError(err.Error(), "Use 'mav get <name>' to see all fields.")
+						return err
+					}
+
+					if clip {
+						cancel, err := clipboard.CopyWithClear(value, 45*time.Second)
+						if err != nil {
+							return fmt.Errorf("clipboard: %w", err)
+						}
+						_ = cancel
+						printSuccess(fmt.Sprintf("Copied field %q to clipboard.", field))
+						return nil
+					}
+
+					if quiet || !term.IsTerminal(int(os.Stdout.Fd())) {
+						fmt.Print(value)
+						return nil
+					}
+
+					format := resolveFormat(outputFormat)
+					if format == "json" {
+						return outputJSON(map[string]string{"key": field, "value": value})
+					}
+
+					outputKeyValue("Name", args[0])
+					outputKeyValue("Field", field)
+					outputKeyValue("Value", colorize(value, ansiGreen))
+					return nil
+				}
+
 				envExplicit := cmd.Flags().Changed("env")
 				entry, err := resolveSecret(ctx, v, args[0], env, envExplicit)
 				if err != nil {
@@ -405,6 +473,7 @@ func newGetCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Print only the value (for piping)")
 	cmd.Flags().BoolVarP(&clip, "clip", "c", false, "Copy value to clipboard (auto-clears in 45s)")
 	cmd.Flags().BoolVarP(&printRaw, "print", "p", false, "Print secret in plaintext (legacy output)")
+	cmd.Flags().StringVar(&field, "field", "", "Retrieve a single named field value")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
@@ -478,11 +547,19 @@ func newListCmd() *cobra.Command {
 }
 
 func newDeleteCmd() *cobra.Command {
-	var force bool
+	var (
+		force bool
+		field string
+	)
 
 	cmd := &cobra.Command{
-		Use:               "delete <name>",
-		Short:             "Delete a secret",
+		Use:   "delete <name>",
+		Short: "Delete a secret or a single field",
+		Long: `Delete a secret entry entirely, or use --field to remove a single named field.
+
+Examples:
+  mav delete my-secret
+  mav delete aws-creds --field access_key_id`,
 		Aliases:           []string{"rm"},
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
@@ -498,6 +575,33 @@ func newDeleteCmd() *cobra.Command {
 				if err != nil {
 					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
+				}
+
+				// Field mode: delete a single named field.
+				if field != "" {
+					if !force {
+						label := fmt.Sprintf("field %q on secret %q", field, name)
+						if resolvedEnv != "" {
+							label = fmt.Sprintf("field %q on secret %q [%s]", field, name, resolvedEnv)
+						}
+						fmt.Fprintf(os.Stderr, "Delete %s? [y/N]: ", label)
+						scanner := bufio.NewScanner(os.Stdin)
+						if scanner.Scan() {
+							answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+							if answer != "y" && answer != "yes" {
+								fmt.Println("Aborted.")
+								return nil
+							}
+						}
+					}
+
+					if err := v.DeleteField(ctx, name, resolvedEnv, field); err != nil {
+						printError(err.Error(), "Use 'mav get <name>' to see available fields.")
+						return err
+					}
+
+					printSuccess(fmt.Sprintf("Field %q deleted from secret %q.", field, name))
+					return nil
 				}
 
 				if !force {
@@ -528,6 +632,7 @@ func newDeleteCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation prompt")
+	cmd.Flags().StringVar(&field, "field", "", "Delete a single named field instead of the entire secret")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
@@ -621,11 +726,18 @@ func newEditCmd() *cobra.Command {
 }
 
 func newCopyCmd() *cobra.Command {
-	var clearAfter int
+	var (
+		clearAfter int
+		field      string
+	)
 
 	cmd := &cobra.Command{
-		Use:               "copy <name>",
-		Short:             "Copy a secret value to the clipboard",
+		Use:   "copy <name>",
+		Short: "Copy a secret value or field to the clipboard",
+		Long: `Copy a secret's value to the clipboard with automatic clearing.
+
+Use --field to copy a single named field value:
+  mav copy aws-creds --field access_key_id`,
 		Aliases:           []string{"cp"},
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
@@ -633,6 +745,35 @@ func newCopyCmd() *cobra.Command {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				env, _ := cmd.Flags().GetString("env")
 				envExplicit := cmd.Flags().Changed("env")
+
+				// Field mode: copy a single named field value.
+				if field != "" {
+					resolvedEnv, err := resolveSecretEnv(ctx, v, args[0], env, envExplicit)
+					if err != nil {
+						printError(err.Error(), "Use 'mav list' to see available secrets.")
+						return err
+					}
+
+					value, err := v.GetField(ctx, args[0], resolvedEnv, field)
+					if err != nil {
+						printError(err.Error(), "Use 'mav get <name>' to see available fields.")
+						return err
+					}
+
+					dur := time.Duration(clearAfter) * time.Second
+					_, err = clipboard.CopyWithClear(value, dur)
+					if err != nil {
+						return fmt.Errorf("clipboard: %w", err)
+					}
+
+					if clearAfter > 0 {
+						printSuccess(fmt.Sprintf("Copied field %q from %q to clipboard. Auto-clears in %ds.", field, args[0], clearAfter))
+					} else {
+						printSuccess(fmt.Sprintf("Copied field %q from %q to clipboard.", field, args[0]))
+					}
+					return nil
+				}
+
 				entry, err := resolveSecret(ctx, v, args[0], env, envExplicit)
 				if err != nil {
 					printError(err.Error(), "Use 'mav list' to see available secrets.")
@@ -656,6 +797,7 @@ func newCopyCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&clearAfter, "clear", 45, "Seconds before clipboard is auto-cleared (0 to disable)")
+	cmd.Flags().StringVar(&field, "field", "", "Copy a single named field value instead of the main value")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }

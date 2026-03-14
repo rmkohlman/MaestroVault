@@ -185,6 +185,151 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── Secret fields ─────────────────────────────────────────────
+
+// setFieldRequest is the body for PUT /v1/secrets/{name}/fields/{field}.
+type setFieldRequest struct {
+	Value string `json:"value"`
+}
+
+// setFieldsRequest is the body for PUT /v1/secrets/{name}/fields.
+type setFieldsRequest struct {
+	Fields map[string]string `json:"fields"`
+}
+
+// PUT /v1/secrets/{name}/fields/{field}?env=
+func (s *Server) handleSetField(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	fieldKey := r.PathValue("field")
+	if name == "" || fieldKey == "" {
+		writeError(w, http.StatusBadRequest, "secret name and field key are required")
+		return
+	}
+
+	env := r.URL.Query().Get("env")
+
+	var req setFieldRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Value == "" {
+		writeError(w, http.StatusBadRequest, "value is required")
+		return
+	}
+
+	if err := s.vault.SetField(r.Context(), name, env, fieldKey, req.Value); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]string{
+		"status": "stored",
+		"name":   name,
+		"field":  fieldKey,
+	})
+}
+
+// GET /v1/secrets/{name}/fields/{field}?env=
+func (s *Server) handleGetField(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	fieldKey := r.PathValue("field")
+	if name == "" || fieldKey == "" {
+		writeError(w, http.StatusBadRequest, "secret name and field key are required")
+		return
+	}
+
+	env := r.URL.Query().Get("env")
+
+	value, err := s.vault.GetField(r.Context(), name, env, fieldKey)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, FieldResponse{
+		Key:   fieldKey,
+		Value: value,
+	})
+}
+
+// GET /v1/secrets/{name}/fields?env=
+func (s *Server) handleGetFields(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "secret name is required")
+		return
+	}
+
+	env := r.URL.Query().Get("env")
+
+	fields, err := s.vault.GetFields(r.Context(), name, env)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	if fields == nil {
+		fields = map[string]string{}
+	}
+
+	writeJSON(w, http.StatusOK, fields)
+}
+
+// PUT /v1/secrets/{name}/fields?env=
+func (s *Server) handleSetFields(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "secret name is required")
+		return
+	}
+
+	env := r.URL.Query().Get("env")
+
+	var req setFieldsRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(req.Fields) == 0 {
+		writeError(w, http.StatusBadRequest, "fields map is required and must not be empty")
+		return
+	}
+
+	if err := s.vault.SetFields(r.Context(), name, env, req.Fields); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"status": "stored",
+		"name":   name,
+		"count":  len(req.Fields),
+	})
+}
+
+// DELETE /v1/secrets/{name}/fields/{field}?env=
+func (s *Server) handleDeleteField(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	fieldKey := r.PathValue("field")
+	if name == "" || fieldKey == "" {
+		writeError(w, http.StatusBadRequest, "secret name and field key are required")
+		return
+	}
+
+	env := r.URL.Query().Get("env")
+
+	if err := s.vault.DeleteField(r.Context(), name, env, fieldKey); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "deleted",
+		"name":   name,
+		"field":  fieldKey,
+	})
+}
+
 // ── Search ────────────────────────────────────────────────────
 
 // GET /v1/search?q=

@@ -128,19 +128,26 @@ func (m Model) viewListScreen() string {
 				style = style.Foreground(ColorSecondary)
 			}
 
-			// Build name with environment badge.
+			// Build name with environment badge and field count.
 			nameStr := s.Name
 			envBadge := ""
 			if s.Environment != "" {
 				envBadge = " " + EnvBadgeStyle.Render("["+s.Environment+"]")
 			}
-			// Truncate the name portion, then append badge.
-			// We need to account for the badge width in truncation.
+			fieldBadge := ""
+			if s.FieldCount > 0 {
+				fieldBadge = " " + FieldCountStyle.Render(fmt.Sprintf("{%d}", s.FieldCount))
+			}
+			// Truncate the name portion, then append badges.
+			// We need to account for the badge widths in truncation.
 			badgeLen := 0
 			if s.Environment != "" {
 				badgeLen = len(s.Environment) + 3 // " [" + env + "]"
 			}
-			nameDisplay := truncate(nameStr, nameW-badgeLen) + envBadge
+			if s.FieldCount > 0 {
+				badgeLen += len(fmt.Sprintf(" {%d}", s.FieldCount))
+			}
+			nameDisplay := truncate(nameStr, nameW-badgeLen) + envBadge + fieldBadge
 
 			meta := truncate(formatMetadataPlain(s.Metadata), metaW)
 			updated := ""
@@ -364,6 +371,8 @@ func (m Model) viewHelpOverlay() string {
 		b.WriteString(AccentStyle.Render(" Secret Modal (Add/Edit/View)") + "\n")
 		b.WriteString(helpLine("↑ / ↓ / Tab", "Navigate fields"))
 		b.WriteString(helpLine("Ctrl+R", "Toggle value visibility"))
+		b.WriteString(helpLine("Ctrl+A", "Add field (edit/add mode)"))
+		b.WriteString(helpLine("Ctrl+D", "Remove field (edit/add mode)"))
 		b.WriteString(helpLine("Enter", "Save"))
 		b.WriteString(helpLine("p / Space", "Peek value (view mode)"))
 		b.WriteString(helpLine("c", "Copy value (view mode)"))
