@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rmkohlman/MaestroVault/internal/clipboard"
+	"github.com/rmkohlman/MaestroVault/internal/vault"
 )
 
 // ── Update ────────────────────────────────────────────────────
@@ -86,6 +87,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameInput.Focus()
 		return m, textinput.Blink
 
+	case configSavedMsg:
+		m.toast = "Settings saved"
+		m.toastKind = "success"
+		return m, clearToastAfter(3 * time.Second)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -148,6 +154,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.showInfo {
 		return m.handleInfoKey(msg)
+	}
+	if m.showSettings {
+		return m.handleSettingsKey(msg)
 	}
 
 	if m.vimEnabled {
@@ -294,6 +303,18 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 	// Vault info.
 	case "I":
 		return m, loadVaultInfo(m.vault)
+
+	// Settings.
+	case "S":
+		cfg, err := vault.LoadConfig()
+		if err != nil {
+			m.toast = err.Error()
+			m.toastKind = "error"
+			return m, clearToastAfter(5 * time.Second)
+		}
+		m.settingsConfig = cfg
+		m.settingsCursor = 0
+		m.showSettings = true
 
 	// Refresh.
 	case "r":
@@ -527,18 +548,25 @@ func (m Model) handleConfirmDelete(msg tea.KeyMsg, key string) (tea.Model, tea.C
 func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	switch key {
-	case "esc":
+	switch {
+	case key == "esc":
 		m.searchActive = false
 		m.searchInput.SetValue("")
 		m.searchInput.Blur()
 		m.rebuildDisplay()
 		m.clampCursor()
 		m.adjustScroll()
-	case "enter":
+	case key == "enter":
 		m.searchActive = false
 		m.searchInput.Blur()
 		// Keep filter active with current query.
+	case msg.Type == tea.KeyTab:
+		// Toggle between fuzzy and exact search.
+		m.fuzzySearch = !m.fuzzySearch
+		m.rebuildDisplay()
+		m.clampCursor()
+		m.adjustScroll()
+		return m, nil
 	default:
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
@@ -673,6 +701,40 @@ func (m Model) handleInfoKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// ── Settings overlay ──────────────────────────────────────────
+
+func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch key {
+	case "j", "down":
+		m.settingsCursor = (m.settingsCursor + 1) % settingCount
+	case "k", "up":
+		m.settingsCursor = (m.settingsCursor - 1 + settingCount) % settingCount
+	case " ", "enter":
+		switch m.settingsCursor {
+		case settingVimMode:
+			m.settingsConfig.VimMode = !m.settingsConfig.VimMode
+			// Apply immediately so the user sees the effect.
+			m.vimEnabled = m.settingsConfig.VimMode
+			if !m.vimEnabled {
+				m.mode = ModeNormal
+			}
+		case settingTouchID:
+			m.settingsConfig.TouchID = !m.settingsConfig.TouchID
+		case settingFuzzySearch:
+			m.settingsConfig.FuzzySearch = !m.settingsConfig.FuzzySearch
+			m.fuzzySearch = m.settingsConfig.FuzzySearch
+		}
+	case "esc", "S":
+		m.showSettings = false
+		// Save config to disk on close.
+		return m, saveConfig(m.settingsConfig)
+	}
+
+	return m, nil
+}
+
 // ── Simple (non-vim) key handling ─────────────────────────────
 
 func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -736,6 +798,16 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "n":
 			m.gen = newGenState()
 			m.showGenerator = true
+		case "S":
+			cfg, err := vault.LoadConfig()
+			if err != nil {
+				m.toast = err.Error()
+				m.toastKind = "error"
+				return m, clearToastAfter(5 * time.Second)
+			}
+			m.settingsConfig = cfg
+			m.settingsCursor = 0
+			m.showSettings = true
 		case "?":
 			m.showHelp = true
 		case "r":

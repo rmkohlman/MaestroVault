@@ -38,6 +38,7 @@ func (m Model) vimHelpBar() string {
 				"/", "search",
 				"s", "sort",
 				"n", "generate",
+				"S", "settings",
 				"?", "help",
 			)
 		case screenDetail:
@@ -181,21 +182,52 @@ func (m Model) visibleRows() int {
 
 // ── Matching ──────────────────────────────────────────────────
 
-func matchesQuery(s vault.SecretEntry, query string) bool {
+func matchesQuery(s vault.SecretEntry, query string, fuzzy bool) bool {
 	q := strings.ToLower(query)
-	if strings.Contains(strings.ToLower(s.Name), q) {
+	match := containsMatch
+	if fuzzy {
+		match = fuzzyMatch
+	}
+	if match(strings.ToLower(s.Name), q) {
 		return true
 	}
-	if strings.Contains(strings.ToLower(s.Environment), q) {
+	if match(strings.ToLower(s.Environment), q) {
 		return true
 	}
 	for k, v := range s.Metadata {
-		if strings.Contains(strings.ToLower(k), q) ||
-			strings.Contains(strings.ToLower(fmt.Sprintf("%v", v)), q) {
+		if match(strings.ToLower(k), q) ||
+			match(strings.ToLower(fmt.Sprintf("%v", v)), q) {
 			return true
 		}
 	}
 	return false
+}
+
+// containsMatch is a simple substring match.
+func containsMatch(text, pattern string) bool {
+	return strings.Contains(text, pattern)
+}
+
+// fuzzyMatch checks whether all characters of pattern appear in text
+// in order (not necessarily contiguous). Case-insensitive comparison
+// should be done by the caller (pass lowered strings).
+func fuzzyMatch(text, pattern string) bool {
+	ti := 0
+	for pi := 0; pi < len(pattern); pi++ {
+		found := false
+		for ti < len(text) {
+			if text[ti] == pattern[pi] {
+				ti++
+				found = true
+				break
+			}
+			ti++
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // ── Formatting ────────────────────────────────────────────────

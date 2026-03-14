@@ -30,6 +30,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -326,7 +327,8 @@ func newGetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				env, _ := cmd.Flags().GetString("env")
-				entry, err := v.Get(ctx, args[0], env)
+				envExplicit := cmd.Flags().Changed("env")
+				entry, err := resolveSecret(ctx, v, args[0], env, envExplicit)
 				if err != nil {
 					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
@@ -455,21 +457,34 @@ func newDeleteCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			if !force {
-				fmt.Fprintf(os.Stderr, "Delete secret %q? [y/N]: ", name)
-				scanner := bufio.NewScanner(os.Stdin)
-				if scanner.Scan() {
-					answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
-					if answer != "y" && answer != "yes" {
-						fmt.Println("Aborted.")
-						return nil
-					}
-				}
-			}
-
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				env, _ := cmd.Flags().GetString("env")
-				if err := v.Delete(ctx, name, env); err != nil {
+				envExplicit := cmd.Flags().Changed("env")
+
+				// Resolve the environment first (before confirmation prompt).
+				resolvedEnv, err := resolveSecretEnv(ctx, v, name, env, envExplicit)
+				if err != nil {
+					printError(err.Error(), "Use 'mav list' to see available secrets.")
+					return err
+				}
+
+				if !force {
+					label := name
+					if resolvedEnv != "" {
+						label = fmt.Sprintf("%s [%s]", name, resolvedEnv)
+					}
+					fmt.Fprintf(os.Stderr, "Delete secret %q? [y/N]: ", label)
+					scanner := bufio.NewScanner(os.Stdin)
+					if scanner.Scan() {
+						answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+						if answer != "y" && answer != "yes" {
+							fmt.Println("Aborted.")
+							return nil
+						}
+					}
+				}
+
+				if err := v.Delete(ctx, name, resolvedEnv); err != nil {
 					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
 				}
@@ -502,6 +517,14 @@ func newEditCmd() *cobra.Command {
 
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				env, _ := cmd.Flags().GetString("env")
+				envExplicit := cmd.Flags().Changed("env")
+
+				// Resolve the environment first.
+				resolvedEnv, err := resolveSecretEnv(ctx, v, name, env, envExplicit)
+				if err != nil {
+					printError(err.Error(), "Use 'mav list' to see available secrets.")
+					return err
+				}
 
 				var newValue *string
 				if cmd.Flags().Changed("value") {
@@ -535,7 +558,7 @@ func newEditCmd() *cobra.Command {
 					newValue = &val
 				}
 
-				if err := v.Edit(ctx, name, env, newValue, newMetadata); err != nil {
+				if err := v.Edit(ctx, name, resolvedEnv, newValue, newMetadata); err != nil {
 					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
 				}
@@ -564,7 +587,8 @@ func newCopyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				env, _ := cmd.Flags().GetString("env")
-				entry, err := v.Get(ctx, args[0], env)
+				envExplicit := cmd.Flags().Changed("env")
+				entry, err := resolveSecret(ctx, v, args[0], env, envExplicit)
 				if err != nil {
 					printError(err.Error(), "Use 'mav list' to see available secrets.")
 					return err
@@ -587,6 +611,7 @@ func newCopyCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&clearAfter, "clear", 45, "Seconds before clipboard is auto-cleared (0 to disable)")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
@@ -988,13 +1013,16 @@ Set "vim_mode": true in ~/.maestrovault/config.json to enable by default.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				// If --vim was not explicitly set, fall back to config.
+				cfg, _ := vault.LoadConfig()
 				if !cmd.Flags().Changed("vim") {
-					cfg, err := vault.LoadConfig()
-					if err == nil && cfg.VimMode {
+					if cfg.VimMode {
 						vimMode = true
 					}
 				}
-				opts := tui.Opts{VimMode: vimMode}
+				opts := tui.Opts{
+					VimMode:     vimMode,
+					FuzzySearch: cfg.FuzzySearch,
+				}
 				p := tea.NewProgram(tui.New(v, opts), tea.WithAltScreen())
 				if _, err := p.Run(); err != nil {
 					return fmt.Errorf("TUI error: %w", err)
@@ -1466,6 +1494,210 @@ func newTouchIDStatusCmd() *cobra.Command {
 
 			return nil
 		},
+	}
+}
+
+// --- Secret resolution helpers ---
+
+// resolveSecret resolves a secret by name, handling the case where --env is
+// not specified but the secret exists in one or more environments.
+//
+// Resolution order:
+//  1. Exact match with the given (name, env) — fast path.
+//  2. If not-found AND envExplicit is false: list all secrets, filter by name.
+//     a. Single match → return that entry.
+//     b. Multiple matches → present interactive arrow-key selector.
+//     c. Zero matches → return not-found error.
+func resolveSecret(ctx context.Context, v vault.Vault, name, env string, envExplicit bool) (*vault.SecretEntry, error) {
+	entry, err := v.Get(ctx, name, env)
+	if err == nil {
+		return entry, nil
+	}
+	if !errors.Is(err, vault.ErrNotFound) || envExplicit {
+		return nil, err
+	}
+
+	// --env was not set and exact match failed — look across all environments.
+	all, listErr := v.List(ctx, "")
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	var matches []vault.SecretEntry
+	for _, e := range all {
+		if strings.EqualFold(e.Name, name) {
+			matches = append(matches, e)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return nil, vault.ErrNotFound
+	case 1:
+		// Single match — auto-resolve.
+		return v.Get(ctx, matches[0].Name, matches[0].Environment)
+	default:
+		// Multiple environments — let the user pick.
+		chosen, pickErr := pickEnvironment(name, matches)
+		if pickErr != nil {
+			return nil, pickErr
+		}
+		return v.Get(ctx, chosen.Name, chosen.Environment)
+	}
+}
+
+// resolveSecretEnv is a lighter version of resolveSecret that returns just the
+// resolved environment string (for delete/edit where we don't always need the
+// full decrypted entry up front).
+func resolveSecretEnv(ctx context.Context, v vault.Vault, name, env string, envExplicit bool) (string, error) {
+	// Try exact match first.
+	entry, err := v.Get(ctx, name, env)
+	if err == nil {
+		return entry.Environment, nil
+	}
+	if !errors.Is(err, vault.ErrNotFound) || envExplicit {
+		return "", err
+	}
+
+	// Look across all environments.
+	all, listErr := v.List(ctx, "")
+	if listErr != nil {
+		return "", listErr
+	}
+
+	var matches []vault.SecretEntry
+	for _, e := range all {
+		if strings.EqualFold(e.Name, name) {
+			matches = append(matches, e)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", vault.ErrNotFound
+	case 1:
+		return matches[0].Environment, nil
+	default:
+		chosen, pickErr := pickEnvironment(name, matches)
+		if pickErr != nil {
+			return "", pickErr
+		}
+		return chosen.Environment, nil
+	}
+}
+
+// pickEnvironment presents an interactive arrow-key selector for choosing
+// among multiple environment matches. Returns the selected entry.
+func pickEnvironment(name string, matches []vault.SecretEntry) (*vault.SecretEntry, error) {
+	// If not a terminal, we can't do interactive selection.
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		envs := make([]string, len(matches))
+		for i, m := range matches {
+			envs[i] = m.Environment
+		}
+		return nil, fmt.Errorf("secret %q exists in multiple environments: %s\nUse --env to specify one",
+			name, strings.Join(envs, ", "))
+	}
+
+	// Switch terminal to raw mode for arrow key input.
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, fmt.Errorf("terminal: %w", err)
+	}
+	defer term.Restore(fd, oldState)
+
+	cursor := 0
+	total := len(matches)
+
+	render := func() {
+		// Move to start and clear.
+		fmt.Fprintf(os.Stderr, "\r\033[J") // clear from cursor to end
+		fmt.Fprintf(os.Stderr, "%s exists in multiple environments:\r\n",
+			colorize(fmt.Sprintf("Secret %q", name), ansiBold))
+		for i, m := range matches {
+			envLabel := m.Environment
+			if envLabel == "" {
+				envLabel = "(default)"
+			}
+			if i == cursor {
+				fmt.Fprintf(os.Stderr, "  %s %s\r\n",
+					colorize("▸", ansiCyan+ansiBold),
+					colorize(envLabel, ansiCyan+ansiBold))
+			} else {
+				fmt.Fprintf(os.Stderr, "    %s\r\n", colorize(envLabel, ansiDim))
+			}
+		}
+		fmt.Fprintf(os.Stderr, "\r%s",
+			colorize("  ↑/↓ navigate • enter select • q cancel", ansiDim))
+	}
+
+	// Lines to clear: 1 header + total options + 1 hint = total+2
+	clearPicker := func() {
+		lines := total + 2
+		// Move up to the start of the picker.
+		fmt.Fprintf(os.Stderr, "\r")
+		for i := 0; i < lines; i++ {
+			fmt.Fprintf(os.Stderr, "\033[A") // move up
+		}
+		fmt.Fprintf(os.Stderr, "\033[J") // clear to end of screen
+	}
+
+	render()
+
+	buf := make([]byte, 3)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			clearPicker()
+			return nil, fmt.Errorf("reading input: %w", err)
+		}
+
+		switch {
+		case n == 1 && (buf[0] == 'q' || buf[0] == 27): // 'q' or bare escape
+			clearPicker()
+			return nil, fmt.Errorf("aborted")
+		case n == 1 && (buf[0] == '\r' || buf[0] == '\n'): // enter
+			clearPicker()
+			chosen := matches[cursor]
+			fmt.Fprintf(os.Stderr, "%s using environment %s\n",
+				colorize("▸", ansiCyan),
+				colorize(func() string {
+					if chosen.Environment == "" {
+						return "(default)"
+					}
+					return chosen.Environment
+				}(), ansiCyan+ansiBold))
+			return &chosen, nil
+		case n == 1 && buf[0] == 'k': // vim up
+			if cursor > 0 {
+				cursor--
+			}
+		case n == 1 && buf[0] == 'j': // vim down
+			if cursor < total-1 {
+				cursor++
+			}
+		case n == 3 && buf[0] == 27 && buf[1] == '[' && buf[2] == 'A': // up arrow
+			if cursor > 0 {
+				cursor--
+			}
+		case n == 3 && buf[0] == 27 && buf[1] == '[' && buf[2] == 'B': // down arrow
+			if cursor < total-1 {
+				cursor++
+			}
+		case n == 1 && buf[0] == 3: // Ctrl+C
+			clearPicker()
+			return nil, fmt.Errorf("aborted")
+		default:
+			continue
+		}
+
+		// Re-render: move cursor up to header line, then redraw.
+		lines := total + 2
+		for i := 0; i < lines; i++ {
+			fmt.Fprintf(os.Stderr, "\033[A") // move up one line
+		}
+		render()
 	}
 }
 

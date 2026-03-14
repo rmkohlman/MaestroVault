@@ -24,6 +24,9 @@ func (m Model) View() string {
 	if m.showInfo {
 		return m.viewInfoOverlay()
 	}
+	if m.showSettings {
+		return m.viewSettingsOverlay()
+	}
 
 	var s string
 	switch m.screen {
@@ -63,11 +66,19 @@ func (m Model) viewListScreen() string {
 
 	// Search bar.
 	if m.searchActive {
+		modeTag := MutedStyle.Render("[exact]")
+		if m.fuzzySearch {
+			modeTag = AccentStyle.Render("[fuzzy]")
+		}
 		searchLabel := SearchLabelStyle.Render("/")
-		b.WriteString(searchLabel + m.searchInput.View())
+		b.WriteString(searchLabel + m.searchInput.View() + " " + modeTag)
 		b.WriteString("\n")
 	} else if q := m.searchInput.Value(); q != "" {
-		b.WriteString(SearchLabelStyle.Render("filter: ") + SearchStyle.Render(q))
+		modeTag := MutedStyle.Render("[exact]")
+		if m.fuzzySearch {
+			modeTag = AccentStyle.Render("[fuzzy]")
+		}
+		b.WriteString(SearchLabelStyle.Render("filter: ") + SearchStyle.Render(q) + " " + modeTag)
 		b.WriteString("\n")
 	}
 
@@ -171,6 +182,7 @@ func (m Model) viewListScreen() string {
 			"d", "del",
 			"/", "search",
 			"s", "sort",
+			"S", "settings",
 			"?", "help",
 			"q", "quit",
 		))
@@ -424,9 +436,11 @@ func (m Model) viewHelpOverlay() string {
 		b.WriteString(helpLine("dd / x", "Delete secret(s)"))
 		b.WriteString(helpLine("v / V", "Enter visual mode"))
 		b.WriteString(helpLine("/", "Search / filter"))
+		b.WriteString(helpLine("Tab", "Toggle fuzzy / exact search"))
 		b.WriteString(helpLine("s", "Cycle sort order"))
 		b.WriteString(helpLine("n", "Open password generator"))
 		b.WriteString(helpLine("I", "Vault info"))
+		b.WriteString(helpLine("S", "Settings"))
 		b.WriteString(helpLine("r", "Refresh list"))
 		b.WriteString(helpLine("?", "Toggle this help"))
 		b.WriteString(helpLine("q", "Quit"))
@@ -464,8 +478,10 @@ func (m Model) viewHelpOverlay() string {
 		b.WriteString(helpLine("c", "Copy to clipboard"))
 		b.WriteString(helpLine("d", "Delete secret"))
 		b.WriteString(helpLine("/", "Search / filter"))
+		b.WriteString(helpLine("Tab", "Toggle fuzzy / exact search"))
 		b.WriteString(helpLine("s", "Cycle sort order"))
 		b.WriteString(helpLine("n", "Password generator"))
+		b.WriteString(helpLine("S", "Settings"))
 		b.WriteString(helpLine("?", "Toggle this help"))
 		b.WriteString(helpLine("r", "Refresh"))
 		b.WriteString(helpLine("q", "Quit"))
@@ -589,6 +605,55 @@ func (m Model) viewInfoOverlay() string {
 
 	b.WriteString("\n")
 	b.WriteString(MutedStyle.Render(" Press Esc to close"))
+
+	content := b.String()
+	modal := ModalStyle.Width(w).Render(content)
+
+	return m.centerOverlay(modal)
+}
+
+// ── Settings overlay ──────────────────────────────────────────
+
+func (m Model) viewSettingsOverlay() string {
+	var b strings.Builder
+	w := 50
+
+	b.WriteString(TitleStyle.Render(" Settings"))
+	b.WriteString("\n\n")
+
+	items := []struct {
+		label string
+		on    bool
+		desc  string
+		idx   int
+	}{
+		{"Vim Mode", m.settingsConfig.VimMode, "Vim keybindings in the TUI", settingVimMode},
+		{"TouchID", m.settingsConfig.TouchID, "Biometric auth on vault open", settingTouchID},
+		{"Fuzzy Search", m.settingsConfig.FuzzySearch, "Default search to fuzzy matching", settingFuzzySearch},
+	}
+
+	for _, item := range items {
+		cursor := "  "
+		labelStyle := GenLabelStyle
+		if m.settingsCursor == item.idx {
+			cursor = AccentStyle.Render("▸ ")
+			labelStyle = GenActiveStyle
+		}
+		toggle := m.checkMark(item.on)
+		b.WriteString(cursor + labelStyle.Render(padRight(item.label, 16)) + " " + toggle)
+		b.WriteString("\n")
+		b.WriteString("    " + MutedStyle.Render(item.desc))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(MutedStyle.Render(" Config: ") + MutedStyle.Render("~/.maestrovault/config.json"))
+	b.WriteString("\n\n")
+	b.WriteString(m.helpBar(
+		"j/k", "navigate",
+		"space", "toggle",
+		"esc", "save & close",
+	))
 
 	content := b.String()
 	modal := ModalStyle.Width(w).Render(content)

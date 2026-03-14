@@ -154,6 +154,15 @@ func (g *genState) opts() crypto.GenerateOpts {
 	}
 }
 
+// ── Settings overlay ──────────────────────────────────────────
+
+const (
+	settingVimMode     = 0
+	settingTouchID     = 1
+	settingFuzzySearch = 2
+	settingCount       = 3
+)
+
 // ── secretRef identifies a secret by name + environment ───────
 
 type secretRef struct {
@@ -195,6 +204,7 @@ type Model struct {
 	// Search.
 	searchActive bool
 	searchInput  textinput.Model
+	fuzzySearch  bool // true = fuzzy matching, false = substring
 
 	// Detail view.
 	valueMasked bool // value masked by default in detail view
@@ -212,8 +222,13 @@ type Model struct {
 	showHelp      bool
 	showGenerator bool
 	showInfo      bool
+	showSettings  bool
 	gen           genState
 	vaultInfo     *vault.VaultInfo
+
+	// Settings overlay state.
+	settingsCursor int
+	settingsConfig vault.Config
 
 	// Toast notification.
 	toast     string
@@ -225,7 +240,8 @@ type Model struct {
 
 // Opts configures optional TUI behavior.
 type Opts struct {
-	VimMode bool
+	VimMode     bool
+	FuzzySearch bool
 }
 
 // New creates a new TUI model backed by an open vault.
@@ -255,6 +271,7 @@ func New(v vault.Vault, opts Opts) Model {
 		vault:         v,
 		screen:        screenList,
 		vimEnabled:    opts.VimMode,
+		fuzzySearch:   opts.FuzzySearch,
 		mode:          ModeNormal,
 		nameInput:     ni,
 		envInput:      ei,
@@ -281,6 +298,7 @@ type toastClearMsg struct{}
 type vaultInfoMsg struct{ info *vault.VaultInfo }
 type clipboardMsg struct{ name string }
 type editDetailMsg struct{ entry *vault.SecretEntry }
+type configSavedMsg struct{}
 
 // ── Commands ──────────────────────────────────────────────────
 
@@ -372,6 +390,15 @@ func clearToastAfter(d time.Duration) tea.Cmd {
 	})
 }
 
+func saveConfig(cfg vault.Config) tea.Cmd {
+	return func() tea.Msg {
+		if err := vault.SaveConfig(cfg); err != nil {
+			return errMsg{err}
+		}
+		return configSavedMsg{}
+	}
+}
+
 // ── Init ──────────────────────────────────────────────────────
 
 func (m Model) Init() tea.Cmd {
@@ -389,7 +416,7 @@ func (m *Model) rebuildDisplay() {
 		copy(list, m.secrets)
 	} else {
 		for _, s := range m.secrets {
-			if matchesQuery(s, query) {
+			if matchesQuery(s, query, m.fuzzySearch) {
 				list = append(list, s)
 			}
 		}

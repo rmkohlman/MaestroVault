@@ -15,6 +15,8 @@ type Config struct {
 	TouchID bool `json:"touchid"`
 	// VimMode enables vim keybindings (Normal/Visual/Insert) in the TUI.
 	VimMode bool `json:"vim_mode"`
+	// FuzzySearch uses fuzzy matching for the TUI search filter by default.
+	FuzzySearch bool `json:"fuzzy_search"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
