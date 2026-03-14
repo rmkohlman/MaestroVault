@@ -2,6 +2,9 @@
 
 MaestroVault ships a Go client library at `pkg/client` for programmatic access to the REST API. It communicates over the Unix domain socket using standard `net/http`.
 
+!!! note "Prerequisites"
+    The API server must be running: `mav serve`. For automation or CI where biometric prompts are not possible, start the server with `mav serve --no-touchid`. API token authentication still applies to all requests.
+
 ## Installation
 
 ```bash

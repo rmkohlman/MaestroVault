@@ -1085,6 +1085,7 @@ Set "vim_mode": true in ~/.maestrovault/config.json to enable by default.`,
 
 func newServeCmd() *cobra.Command {
 	var socketPath string
+	var noTouchID bool
 
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -1097,18 +1098,23 @@ health checks) require a valid Bearer token.
 
 Default socket: ~/.maestrovault/maestrovault.sock
 
-Use 'mav token create' to generate API tokens before starting.`,
+Use 'mav token create' to generate API tokens before starting.
+
+Use --no-touchid to skip biometric authentication when starting the server
+for automation or CI workflows. API token authentication still applies to
+all requests.`,
 		Example: `  mav serve
-  mav serve --socket /tmp/mav.sock`,
+  mav serve --socket /tmp/mav.sock
+  mav serve --no-touchid`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
-			// Load config and check TouchID.
+			// Load config and check TouchID (skip if --no-touchid).
 			cfg, err := vault.LoadConfig()
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
-			if cfg.TouchID {
+			if cfg.TouchID && !noTouchID {
 				auth := touchid.New()
 				if err := auth.Authenticate("MaestroVault API server"); err != nil {
 					return fmt.Errorf("authentication required: %w", err)
@@ -1144,6 +1150,7 @@ Use 'mav token create' to generate API tokens before starting.`,
 	}
 
 	cmd.Flags().StringVar(&socketPath, "socket", "", "Custom Unix socket path (default: ~/.maestrovault/maestrovault.sock)")
+	cmd.Flags().BoolVar(&noTouchID, "no-touchid", false, "Skip TouchID authentication (for automation)")
 	return cmd
 }
 

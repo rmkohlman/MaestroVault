@@ -102,6 +102,16 @@ The `touchid` field controls biometric authentication. The other fields (`vim_mo
 - The TouchID prompt reads: "MaestroVault wants to access your secrets"
 - On non-macOS platforms, TouchID functions return graceful "not available" errors
 
+## Automation & API Server
+
+When running `mav serve` for automation or CI workflows, you can skip the biometric prompt at startup:
+
+```bash
+mav serve --no-touchid
+```
+
+This only affects the server startup. All API requests still require valid Bearer token authentication. Interactive CLI commands (`mav get`, `mav set`, etc.) continue to require TouchID when enabled.
+
 ## Troubleshooting
 
 **"TouchID is not available on this device"**

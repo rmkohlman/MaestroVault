@@ -288,11 +288,13 @@ Start the REST API server on a Unix domain socket.
 ```bash
 mav serve
 mav serve --socket /tmp/mav.sock
+mav serve --no-touchid
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--socket` | Custom socket path (default: `~/.maestrovault/maestrovault.sock`) |
+| `--no-touchid` | Skip TouchID authentication at startup (for automation) |
 
 See the [REST API reference](api.md) for endpoints.
 
