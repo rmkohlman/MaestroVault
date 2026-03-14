@@ -3,7 +3,7 @@
 ## Requirements
 
 - macOS (arm64 or amd64)
-- Go 1.21+ (only if building from source)
+- Go 1.25+ (only if building from source)
 
 ## Installation
 
@@ -182,6 +182,26 @@ For vim keybindings:
 ```bash
 mav tui --vim
 ```
+
+## Configuration
+
+MaestroVault stores settings in `~/.maestrovault/config.json`:
+
+```json
+{
+  "touchid": false,
+  "vim_mode": false,
+  "fuzzy_search": false
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `touchid` | Enable TouchID biometric gate on vault open |
+| `vim_mode` | Enable vim keybinding modes in the TUI |
+| `fuzzy_search` | Enable fuzzy matching in TUI search |
+
+All settings can also be toggled from the TUI settings overlay (`S`).
 
 ## What's next
 

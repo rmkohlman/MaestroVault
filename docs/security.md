@@ -171,5 +171,5 @@ MaestroVault is a developer convenience tool, not a hardware security module. It
 |------|-------------|----------|
 | `~/.maestrovault/` | `0700` | Vault directory |
 | `~/.maestrovault/vault.db` | Created by SQLite | Encrypted secrets |
-| `~/.maestrovault/config.json` | `0600` | TouchID settings |
+| `~/.maestrovault/config.json` | `0600` | TouchID, vim mode, and fuzzy search settings |
 | `~/.maestrovault/maestrovault.sock` | `0600` | API Unix socket |

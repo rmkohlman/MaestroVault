@@ -81,11 +81,13 @@ TouchID settings are stored in `~/.maestrovault/config.json`:
 
 ```json
 {
-  "touchid": true
+  "touchid": true,
+  "vim_mode": false,
+  "fuzzy_search": false
 }
 ```
 
-The file is created with `0600` permissions. If the file is missing, TouchID defaults to disabled.
+The `touchid` field controls biometric authentication. The other fields (`vim_mode`, `fuzzy_search`) control TUI behavior. The file is created with `0600` permissions. If the file is missing, all settings default to disabled.
 
 ## Requirements
 

@@ -88,6 +88,12 @@ type genState struct {
 	cursor    int // 0=length, 1=upper, 2=lower, 3=digits, 4=symbols, 5=name, 6=env
 	nameInput textinput.Model
 	envInput  textinput.Model
+
+	// Save feedback state.
+	saving    bool
+	savedMsg  string
+	toast     string
+	toastKind string
 }
 
 const (
@@ -267,6 +273,17 @@ type clipboardMsg struct{ name string }
 type editDetailMsg struct{ entry *vault.SecretEntry }
 type configSavedMsg struct{}
 
+type genSaveResultMsg struct {
+	saved bool
+	toast string
+	kind  string
+}
+
+type genDoneMsg struct {
+	toast string
+	kind  string
+}
+
 // ── Commands ──────────────────────────────────────────────────
 
 func loadSecrets(v vault.Vault) tea.Cmd {
@@ -363,6 +380,15 @@ func saveConfig(cfg vault.Config) tea.Cmd {
 			return errMsg{err}
 		}
 		return configSavedMsg{}
+	}
+}
+
+func genSaveSecret(v vault.Vault, name, env, value string) tea.Cmd {
+	return func() tea.Msg {
+		if err := v.Set(context.Background(), name, env, value, nil); err != nil {
+			return genSaveResultMsg{toast: err.Error(), kind: "error"}
+		}
+		return genSaveResultMsg{saved: true, toast: fmt.Sprintf("Secret %q stored.", name), kind: "success"}
 	}
 }
 

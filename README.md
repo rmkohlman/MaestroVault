@@ -63,9 +63,9 @@ mav tui --vim
 | `get` | Retrieve a secret |
 | `list` | List all secrets |
 | `delete` | Delete a secret |
-| `edit` | Edit a secret interactively |
+| `edit` | Edit a secret |
 | `copy` | Copy a secret to clipboard |
-| `search` | Search secrets by name |
+| `search` | Search secrets by name, environment, and metadata |
 | `generate` | Generate a password or token |
 | `env` | Print secrets as environment variables |
 | `exec` | Run a command with secrets injected |
@@ -90,7 +90,7 @@ Create a token and make requests:
 
 ```sh
 # Create a scoped token
-mav token create --name ci --scopes read,write
+mav token create --name ci --scope read,write
 
 # Use it
 curl --unix-socket ~/.maestrovault/maestrovault.sock \
@@ -104,7 +104,7 @@ curl --unix-socket ~/.maestrovault/maestrovault.sock \
 - **Master key** — Stored in macOS Keychain, never touches disk
 - **TouchID** — Optional biometric gate before vault access
 - **API tokens** — HMAC-SHA256 hashed at rest, scoped (`read`, `write`, `generate`, `admin`)
-- **File permissions** — Vault directory locked to `0700`, database to `0600`
+- **File permissions** — Vault directory locked to `0700`, config to `0600`
 
 ## Documentation
 

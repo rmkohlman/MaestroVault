@@ -474,18 +474,32 @@ func (m Model) viewGeneratorOverlay() string {
 		envLabel = GenActiveStyle
 	}
 	b.WriteString(envCursor + envLabel.Render("Env:     ") + m.gen.envInput.View())
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	// Hints.
-	b.WriteString(m.helpBar(
-		"j/k", "navigate",
-		"h/l", "adjust",
-		"space", "toggle",
-		"r", "regen",
-		"c", "copy",
-		"↵", "save",
-		"esc", "close",
-	))
+	// Toast (inline error).
+	if m.gen.toast != "" {
+		b.WriteString("  " + ToastErrorStyle.Render(" "+m.gen.toast+" "))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	// Hints / save feedback.
+	if m.gen.saving {
+		b.WriteString("  " + ToastInfoStyle.Render(" Saving... "))
+	} else if m.gen.savedMsg != "" {
+		b.WriteString("  " + ToastSuccessStyle.Render(" ✓ "+m.gen.savedMsg+" "))
+	} else {
+		b.WriteString(m.helpBar(
+			"j/k", "navigate",
+			"h/l", "adjust",
+			"space", "toggle",
+			"r", "regen",
+			"c", "copy",
+			"↵", "save",
+			"esc", "close",
+		))
+	}
 
 	content := b.String()
 	modal := ModalStyle.Width(w).Render(content)

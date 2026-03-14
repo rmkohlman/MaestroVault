@@ -162,7 +162,7 @@ err := c.RevokeToken("token-id")
 All methods return errors for HTTP 4xx/5xx responses. The error message includes the status code and server error message:
 
 ```go
-secret, err := c.Get("nonexistent")
+secret, err := c.Get("nonexistent", "")
 if err != nil {
     // err: "API error (404): secret \"nonexistent\" not found"
     fmt.Println(err)

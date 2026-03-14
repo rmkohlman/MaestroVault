@@ -90,16 +90,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 
 	case secretModalResultMsg:
+		m.secretModal.saving = false
+		if msg.saved {
+			m.secretModal.savedMsg = msg.toast
+			m.secretModal.savedKind = msg.kind
+			toast := msg.toast
+			kind := msg.kind
+			return m, tea.Tick(700*time.Millisecond, func(t time.Time) tea.Msg {
+				return secretModalDoneMsg{toast: toast, kind: kind, saved: true}
+			})
+		}
+		// Error: show in modal, keep open.
+		m.secretModal.toast = msg.toast
+		m.secretModal.toastKind = msg.kind
+		return m, nil
+
+	case secretModalDoneMsg:
 		m.showSecretModal = false
-		if msg.toast != "" {
+		if msg.saved {
 			m.toast = msg.toast
 			m.toastKind = msg.kind
-		}
-		if msg.saved {
 			return m, tea.Batch(loadSecrets(m.vault), clearToastAfter(3*time.Second))
-		}
-		if msg.toast != "" {
-			return m, clearToastAfter(3 * time.Second)
 		}
 		return m, nil
 
@@ -111,6 +122,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = "Settings saved"
 		m.toastKind = "success"
 		return m, clearToastAfter(3 * time.Second)
+
+	case genSaveResultMsg:
+		m.gen.saving = false
+		if msg.saved {
+			m.gen.savedMsg = msg.toast
+			toast := msg.toast
+			kind := msg.kind
+			return m, tea.Tick(700*time.Millisecond, func(t time.Time) tea.Msg {
+				return genDoneMsg{toast: toast, kind: kind}
+			})
+		}
+		m.gen.toast = msg.toast
+		m.gen.toastKind = msg.kind
+		return m, nil
+
+	case genDoneMsg:
+		m.showGenerator = false
+		m.toast = msg.toast
+		m.toastKind = msg.kind
+		return m, tea.Batch(loadSecrets(m.vault), clearToastAfter(3*time.Second))
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -495,6 +526,11 @@ func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ── Generator overlay ─────────────────────────────────────────
 
 func (m Model) handleGeneratorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Block input during save or saved flash.
+	if m.gen.saving || m.gen.savedMsg != "" {
+		return m, nil
+	}
+
 	key := msg.String()
 
 	switch key {
@@ -570,8 +606,9 @@ func (m Model) handleGeneratorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if name != "" {
 			value := m.gen.preview
 			env := m.gen.envInput.Value()
-			m.showGenerator = false
-			return m, setSecret(m.vault, name, env, value, nil)
+			m.gen.saving = true
+			m.gen.toast = ""
+			return m, genSaveSecret(m.vault, name, env, value)
 		}
 		// No name: just close.
 		m.showGenerator = false

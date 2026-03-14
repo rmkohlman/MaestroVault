@@ -33,6 +33,8 @@ mav set api-key --value "sk-123" --env prod --metadata service=api
 echo "piped-value" | mav set token-name
 ```
 
+On a TTY with no `--value` or `--generate` flag, `mav set` opens an interactive modal for entering the secret name, value, environment, and metadata.
+
 | Flag | Description |
 |------|-------------|
 | `--value`, `-v` | Secret value (reads from stdin if omitted) |
@@ -54,11 +56,16 @@ mav get db-password --env prod
 mav get db-password -o json
 ```
 
+On a TTY (without `-q`, `-c`, or `--print`), `mav get` opens an interactive modal showing the secret with the value masked. From the modal you can peek, copy, edit, or quit.
+
 | Flag | Description |
 |------|-------------|
 | `--quiet`, `-q` | Print only the value (for piping) |
 | `--clip`, `-c` | Copy value to clipboard (auto-clears in 45s) |
+| `--print`, `-p` | Print the secret in plaintext (legacy behavior) |
 | `--env`, `-e` | Environment (e.g. dev, staging, prod) |
+
+When stdout is not a TTY (piped), the raw value is printed automatically.
 
 Shell completion is available for secret names.
 
@@ -67,6 +74,8 @@ Shell completion is available for secret names.
 ## `mav list`
 
 List all secrets (values are not shown).
+
+**Alias:** `mav ls`
 
 ```bash
 mav list
@@ -87,6 +96,8 @@ mav list -o json
 ## `mav delete <name>`
 
 Delete a secret. Requires confirmation unless `--force` is used.
+
+**Alias:** `mav rm`
 
 ```bash
 mav delete old-key
@@ -109,6 +120,8 @@ mav edit db-password --value "new-password"
 mav edit api-key --metadata env=staging
 ```
 
+On a TTY with no flags, `mav edit` opens an interactive modal pre-populated with the secret's current values for inline editing.
+
 | Flag | Description |
 |------|-------------|
 | `--value`, `-v` | New value (keeps existing if omitted) |
@@ -120,6 +133,8 @@ mav edit api-key --metadata env=staging
 ## `mav copy <name>`
 
 Copy a secret's value to the system clipboard.
+
+**Alias:** `mav cp`
 
 ```bash
 mav copy db-password
@@ -260,7 +275,7 @@ mav tui --vim
 
 | Flag | Description |
 |------|-------------|
-| `--vim` | Enable vim keybinding modes (Normal/Visual/Insert) |
+| `--vim` | Enable vim keybinding modes (Normal/Visual) |
 
 See the [TUI Guide](tui.md) for keyboard shortcuts.
 
@@ -305,6 +320,8 @@ mav token create --name "admin" --scope admin
     The plaintext token is shown only once at creation time. Save it somewhere safe.
 
 ### `token list`
+
+**Alias:** `mav token ls`
 
 ```bash
 mav token list
@@ -379,4 +396,4 @@ mav completion zsh > "${fpath[1]}/_mav"
 mav completion fish > ~/.config/fish/completions/mav.fish
 ```
 
-Secret names are completed dynamically -- press Tab after `get`, `delete`, `edit`, or `copy` to see available names.
+Secret names are completed dynamically -- press Tab after `get`, `set`, `delete`, `edit`, or `copy` to see available names.

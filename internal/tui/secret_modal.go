@@ -44,6 +44,13 @@ type secretModalResultMsg struct {
 // secretModalCloseMsg requests the modal be closed with no side effects.
 type secretModalCloseMsg struct{}
 
+// secretModalDoneMsg is sent after the brief "saved" flash to trigger modal close.
+type secretModalDoneMsg struct {
+	toast string
+	kind  string
+	saved bool
+}
+
 // ── SecretModal ───────────────────────────────────────────────
 
 // SecretModal is a unified bubbletea model for viewing, editing, and adding secrets.
@@ -81,6 +88,11 @@ type SecretModal struct {
 	// Toast for inline error display.
 	toast     string
 	toastKind string
+
+	// Save feedback state.
+	saving    bool   // true while save cmd is in-flight
+	savedMsg  string // set briefly after successful save
+	savedKind string // "success"
 }
 
 // ── Constructors ──────────────────────────────────────────────
@@ -203,6 +215,24 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case secretModalResultMsg:
+		// Reached only in standalone mode (parent intercepts in overlay mode).
+		m.saving = false
+		if msg.saved {
+			m.savedMsg = msg.toast
+			m.savedKind = msg.kind
+			return m, tea.Tick(700*time.Millisecond, func(t time.Time) tea.Msg {
+				return secretModalDoneMsg{}
+			})
+		}
+		m.toast = msg.toast
+		m.toastKind = msg.kind
+		return m, nil
+
+	case secretModalDoneMsg:
+		// Reached only in standalone mode.
+		return m, tea.Quit
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -282,6 +312,11 @@ func (m SecretModal) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ── Edit mode key handling ────────────────────────────────────
 
 func (m SecretModal) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Block input during save or saved flash.
+	if m.saving || m.savedMsg != "" {
+		return m, nil
+	}
+
 	switch {
 	case msg.Type == tea.KeyCtrlR:
 		m.valueRevealed = !m.valueRevealed
@@ -336,6 +371,11 @@ func (m SecretModal) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ── Add mode key handling ─────────────────────────────────────
 
 func (m SecretModal) handleAddKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Block input during save or saved flash.
+	if m.saving || m.savedMsg != "" {
+		return m, nil
+	}
+
 	switch {
 	case msg.Type == tea.KeyCtrlR:
 		m.valueRevealed = !m.valueRevealed
@@ -396,6 +436,10 @@ func (m SecretModal) saveSecret() (tea.Model, tea.Cmd) {
 
 	env := strings.TrimSpace(m.envInput.Value())
 	metadata := parseMetadataInput(m.metadataInput.Value())
+
+	m.saving = true
+	m.toast = ""
+
 	v := m.vault
 
 	isEdit := m.mode == modalEdit
@@ -598,15 +642,21 @@ func (m SecretModal) editModeView(titleText string) string {
 
 	b.WriteString("\n")
 
-	// Help bar.
-	var helpParts []string
-	helpParts = append(helpParts,
-		HelpKeyStyle.Render("↑/↓")+" "+HelpDescStyle.Render("navigate"),
-		HelpKeyStyle.Render("ctrl+r")+" "+HelpDescStyle.Render("peek"),
-		HelpKeyStyle.Render("enter")+" "+HelpDescStyle.Render("save"),
-		HelpKeyStyle.Render("esc")+" "+HelpDescStyle.Render("cancel"),
-	)
-	b.WriteString("  " + strings.Join(helpParts, MutedStyle.Render("  ·  ")))
+	// Help bar / save feedback.
+	if m.saving {
+		b.WriteString("  " + ToastInfoStyle.Render(" Saving... "))
+	} else if m.savedMsg != "" {
+		b.WriteString("  " + ToastSuccessStyle.Render(" ✓ "+m.savedMsg+" "))
+	} else {
+		var helpParts []string
+		helpParts = append(helpParts,
+			HelpKeyStyle.Render("↑/↓")+" "+HelpDescStyle.Render("navigate"),
+			HelpKeyStyle.Render("ctrl+r")+" "+HelpDescStyle.Render("peek"),
+			HelpKeyStyle.Render("enter")+" "+HelpDescStyle.Render("save"),
+			HelpKeyStyle.Render("esc")+" "+HelpDescStyle.Render("cancel"),
+		)
+		b.WriteString("  " + strings.Join(helpParts, MutedStyle.Render("  ·  ")))
+	}
 
 	content := b.String()
 	modal := ModalStyle.Width(w).Render(content)
