@@ -11,6 +11,7 @@ MaestroVault encrypts your secrets locally with AES-256-GCM envelope encryption,
 - **AES-256-GCM envelope encryption** -- each secret gets its own data key
 - **macOS Keychain** -- master key never touches disk
 - **TouchID** -- optional biometric gate when opening the vault
+- **Environment-scoped secrets** -- same secret name across dev, staging, prod
 - **CLI** -- 20 commands with shell completions and smart output formatting
 - **TUI** -- full-screen interactive interface with search, sort, copy, edit, and vim motions
 - **REST API** -- Unix socket server with scoped Bearer token auth
@@ -27,10 +28,10 @@ brew install rmkohlman/tap/maestrovault
 maestrovault init
 
 # Store a secret
-maestrovault set db-password --value "s3cret" --label env=prod
+maestrovault set db-password --value "s3cret" --env prod --metadata service=postgres
 
 # Retrieve it
-maestrovault get db-password
+maestrovault get db-password --env prod
 
 # Launch the TUI
 maestrovault tui
@@ -65,7 +66,7 @@ maestrovault
   delete        Delete a secret
   edit          Edit a secret
   copy          Copy to clipboard
-  search        Search by name/labels
+  search        Search by name/metadata
   generate      Generate a password
   env           Export as env vars
   exec          Run command with injected env

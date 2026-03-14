@@ -10,20 +10,20 @@ TouchID integration uses the macOS `LocalAuthentication` framework via CGo. When
 Command invoked
     |
     v
-vault.Open()
-    |
-    +-- Load config (~/.maestrovault/config.json)
+Load config (~/.maestrovault/config.json)
     |
     +-- TouchID enabled?
     |       |
     |       +-- YES: Prompt for biometric auth
     |       |       |
-    |       |       +-- Success: Continue
+    |       |       +-- Success: Continue to open vault
     |       |       +-- Failure: Abort with error
     |       |
     |       +-- NO: Continue without prompt
     |
-    +-- Open database
+    +-- vault.Open()
+    |       |
+    |       +-- Open database
     |
     v
 Ready

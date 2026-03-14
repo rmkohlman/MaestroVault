@@ -1,9 +1,11 @@
 // Package api provides token management for the MaestroVault REST API.
-// Tokens are stored as SHA-256 hashes — the plaintext token is only ever
-// shown once at creation time.
+// Tokens are stored as HMAC-SHA256 hashes with per-token salts.
+// Legacy tokens (pre-salt) are validated with plain SHA-256 for backwards
+// compatibility.
 package api
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -55,8 +57,9 @@ func NewTokenStore(db *sql.DB) *TokenStore {
 	return &TokenStore{db: db}
 }
 
-// Create generates a new API token, stores its hash, and returns the
-// plaintext token. The plaintext is only available at creation time.
+// Create generates a new API token with HMAC-SHA256 hashing, stores the
+// hash and salt, and returns the plaintext token. The plaintext is only
+// available at creation time.
 func (ts *TokenStore) Create(name string, scopes []Scope, expiresAt *time.Time) (plaintext string, tok *Token, err error) {
 	if name == "" {
 		return "", nil, fmt.Errorf("token name cannot be empty")
@@ -72,8 +75,15 @@ func (ts *TokenStore) Create(name string, scopes []Scope, expiresAt *time.Time) 
 	}
 	plaintext = "mvt_" + hex.EncodeToString(raw)
 
-	// Hash for storage.
-	hash := hashToken(plaintext)
+	// Generate 16-byte random salt.
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", nil, fmt.Errorf("generating salt: %w", err)
+	}
+	saltHex := hex.EncodeToString(salt)
+
+	// Hash with HMAC-SHA256 using the salt.
+	hash := hashTokenWithSalt(plaintext, salt)
 
 	// Generate an ID: 8 random hex bytes.
 	idBytes := make([]byte, 8)
@@ -93,9 +103,9 @@ func (ts *TokenStore) Create(name string, scopes []Scope, expiresAt *time.Time) 
 	}
 
 	_, err = ts.db.Exec(`
-		INSERT INTO api_tokens (id, name, token_hash, scopes, created_at, expires_at)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
-	`, id, name, hash, string(scopesJSON), expiresAtVal)
+		INSERT INTO api_tokens (id, name, token_hash, salt, scopes, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+	`, id, name, hash, saltHex, string(scopesJSON), expiresAtVal)
 	if err != nil {
 		return "", nil, fmt.Errorf("storing token: %w", err)
 	}
@@ -111,47 +121,77 @@ func (ts *TokenStore) Create(name string, scopes []Scope, expiresAt *time.Time) 
 	return plaintext, tok, nil
 }
 
-// Validate checks a plaintext token against the database and returns the
-// token record if valid. Returns an error if not found or expired.
+// Validate checks a plaintext token against all tokens in the database.
+// It supports both legacy (no salt, plain SHA-256) and new (HMAC-SHA256
+// with salt) tokens. Returns the token record if valid.
 func (ts *TokenStore) Validate(plaintext string) (*Token, error) {
-	hash := hashToken(plaintext)
-
-	var tok Token
-	var scopesJSON string
-	var expiresAt sql.NullTime
-	var lastUsedAt sql.NullTime
-
-	err := ts.db.QueryRow(`
-		SELECT id, name, scopes, created_at, expires_at, last_used_at
-		FROM api_tokens WHERE token_hash = ?
-	`, hash).Scan(&tok.ID, &tok.Name, &scopesJSON, &tok.CreatedAt, &expiresAt, &lastUsedAt)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("invalid token")
-	}
+	rows, err := ts.db.Query(`
+		SELECT id, name, token_hash, salt, scopes, created_at, expires_at, last_used_at
+		FROM api_tokens
+	`)
 	if err != nil {
-		return nil, fmt.Errorf("validating token: %w", err)
+		return nil, fmt.Errorf("querying tokens: %w", err)
 	}
+	defer rows.Close()
 
-	if err := json.Unmarshal([]byte(scopesJSON), &tok.Scopes); err != nil {
-		return nil, fmt.Errorf("parsing token scopes: %w", err)
-	}
+	// Pre-compute legacy hash once for efficiency.
+	legacyHash := hashToken(plaintext)
 
-	if expiresAt.Valid {
-		tok.ExpiresAt = &expiresAt.Time
-		if time.Now().After(expiresAt.Time) {
-			return nil, fmt.Errorf("token expired")
+	for rows.Next() {
+		var tok Token
+		var storedHash, saltHex, scopesJSON string
+		var expiresAt sql.NullTime
+		var lastUsedAt sql.NullTime
+
+		if err := rows.Scan(&tok.ID, &tok.Name, &storedHash, &saltHex, &scopesJSON, &tok.CreatedAt, &expiresAt, &lastUsedAt); err != nil {
+			return nil, fmt.Errorf("scanning token: %w", err)
 		}
+
+		// Compute the expected hash based on whether this token has a salt.
+		var candidateHash string
+		if saltHex == "" {
+			// Legacy token: plain SHA-256.
+			candidateHash = legacyHash
+		} else {
+			// New token: HMAC-SHA256 with salt.
+			salt, err := hex.DecodeString(saltHex)
+			if err != nil {
+				continue // Skip malformed salt entries.
+			}
+			candidateHash = hashTokenWithSalt(plaintext, salt)
+		}
+
+		if candidateHash != storedHash {
+			continue
+		}
+
+		// Match found — parse scopes.
+		if err := json.Unmarshal([]byte(scopesJSON), &tok.Scopes); err != nil {
+			return nil, fmt.Errorf("parsing token scopes: %w", err)
+		}
+
+		if expiresAt.Valid {
+			tok.ExpiresAt = &expiresAt.Time
+			if time.Now().After(expiresAt.Time) {
+				return nil, fmt.Errorf("token expired")
+			}
+		}
+		if lastUsedAt.Valid {
+			tok.LastUsedAt = &lastUsedAt.Time
+		}
+
+		// Update last_used_at asynchronously.
+		go func() {
+			_, _ = ts.db.Exec(`UPDATE api_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, tok.ID)
+		}()
+
+		return &tok, nil
 	}
-	if lastUsedAt.Valid {
-		tok.LastUsedAt = &lastUsedAt.Time
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating tokens: %w", err)
 	}
 
-	// Update last_used_at.
-	go func() {
-		_, _ = ts.db.Exec(`UPDATE api_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, tok.ID)
-	}()
-
-	return &tok, nil
+	return nil, fmt.Errorf("invalid token")
 }
 
 // HasScope returns true if the token has the given scope.
@@ -221,7 +261,15 @@ func (ts *TokenStore) RevokeAll() (int, error) {
 	return int(n), nil
 }
 
+// hashTokenWithSalt returns HMAC-SHA256(salt, plaintext) as hex.
+func hashTokenWithSalt(plaintext string, salt []byte) string {
+	mac := hmac.New(sha256.New, salt)
+	mac.Write([]byte(plaintext))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // hashToken returns the SHA-256 hex digest of a plaintext token.
+// Kept for legacy token validation (tokens created before salt support).
 func hashToken(plaintext string) string {
 	h := sha256.Sum256([]byte(plaintext))
 	return hex.EncodeToString(h[:])

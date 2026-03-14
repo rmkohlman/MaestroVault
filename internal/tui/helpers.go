@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/rmkohlman/MaestroVault/internal/vault"
@@ -76,18 +78,36 @@ func (m Model) selectionRange() (int, int) {
 	return lo, hi
 }
 
-// selectedNames returns the secret names in the current selection.
-func (m Model) selectedNames() []string {
+// selectedRefs returns the secret name+environment pairs in the current selection.
+func (m Model) selectedRefs() []secretRef {
 	lo, hi := m.selectionRange()
 	if lo < 0 || hi >= len(m.display) {
 		if m.cursor >= 0 && m.cursor < len(m.display) {
-			return []string{m.display[m.cursor].Name}
+			s := m.display[m.cursor]
+			return []secretRef{{Name: s.Name, Environment: s.Environment}}
 		}
 		return nil
 	}
-	names := make([]string, 0, hi-lo+1)
+	refs := make([]secretRef, 0, hi-lo+1)
 	for i := lo; i <= hi; i++ {
-		names = append(names, m.display[i].Name)
+		refs = append(refs, secretRef{
+			Name:        m.display[i].Name,
+			Environment: m.display[i].Environment,
+		})
+	}
+	return refs
+}
+
+// selectedNames returns the secret names in the current selection (for display).
+func (m Model) selectedNames() []string {
+	refs := m.selectedRefs()
+	names := make([]string, len(refs))
+	for i, r := range refs {
+		if r.Environment != "" {
+			names[i] = r.Name + " [" + r.Environment + "]"
+		} else {
+			names[i] = r.Name
+		}
 	}
 	return names
 }
@@ -161,8 +181,12 @@ func matchesQuery(s vault.SecretEntry, query string) bool {
 	if strings.Contains(strings.ToLower(s.Name), q) {
 		return true
 	}
-	for k, v := range s.Labels {
-		if strings.Contains(strings.ToLower(k), q) || strings.Contains(strings.ToLower(v), q) {
+	if strings.Contains(strings.ToLower(s.Environment), q) {
+		return true
+	}
+	for k, v := range s.Metadata {
+		if strings.Contains(strings.ToLower(k), q) ||
+			strings.Contains(strings.ToLower(fmt.Sprintf("%v", v)), q) {
 			return true
 		}
 	}
@@ -171,31 +195,70 @@ func matchesQuery(s vault.SecretEntry, query string) bool {
 
 // ── Formatting ────────────────────────────────────────────────
 
-func formatLabelsInline(labels map[string]string) string {
-	if len(labels) == 0 {
+func formatMetadataInline(metadata map[string]any) string {
+	if len(metadata) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(labels))
-	for k, v := range labels {
-		parts = append(parts, LabelKeyStyle.Render(k)+MutedStyle.Render("=")+LabelValueStyle.Render(v))
+	keys := make([]string, 0, len(metadata))
+	for k := range metadata {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(metadata))
+	for _, k := range keys {
+		parts = append(parts, MetadataKeyStyle.Render(k)+MutedStyle.Render("=")+MetadataValueStyle.Render(fmt.Sprintf("%v", metadata[k])))
 	}
 	return strings.Join(parts, MutedStyle.Render(", "))
 }
 
-func formatLabelsPlain(labels map[string]string) string {
-	if len(labels) == 0 {
+func formatMetadataPlain(metadata map[string]any) string {
+	if len(metadata) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(labels))
-	for k, v := range labels {
-		parts = append(parts, k+"="+v)
+	keys := make([]string, 0, len(metadata))
+	for k := range metadata {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(metadata))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, metadata[k]))
 	}
 	return strings.Join(parts, ", ")
 }
 
+// parseMetadataInput parses a comma-separated "key=value" string into a map.
+func parseMetadataInput(input string) map[string]any {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+	result := make(map[string]any)
+	for _, pair := range strings.Split(input, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		key := strings.TrimSpace(parts[0])
+		if key == "" {
+			continue
+		}
+		if len(parts) == 2 {
+			result[key] = strings.TrimSpace(parts[1])
+		} else {
+			result[key] = ""
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
 func updateEntry(secrets []vault.SecretEntry, entry *vault.SecretEntry) []vault.SecretEntry {
 	for i, s := range secrets {
-		if s.Name == entry.Name {
+		if s.Name == entry.Name && s.Environment == entry.Environment {
 			secrets[i] = *entry
 			return secrets
 		}

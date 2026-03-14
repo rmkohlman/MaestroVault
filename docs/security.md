@@ -83,19 +83,22 @@ Secrets are stored in a SQLite database at `~/.maestrovault/vault.db`:
 
 ```sql
 CREATE TABLE secrets (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    name             TEXT UNIQUE NOT NULL,
-    encrypted_value  BLOB NOT NULL,
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    name               TEXT NOT NULL,
+    environment        TEXT NOT NULL DEFAULT '',
+    encrypted_secret   BLOB NOT NULL,
     encrypted_data_key BLOB NOT NULL,
-    labels           TEXT NOT NULL DEFAULT '{}',
-    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    metadata           TEXT NOT NULL DEFAULT '{}',
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(name, environment)
 );
 
 CREATE TABLE api_tokens (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     token_hash   TEXT UNIQUE NOT NULL,
+    salt         TEXT NOT NULL DEFAULT '',
     scopes       TEXT NOT NULL DEFAULT '[]',
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at   DATETIME,
@@ -107,8 +110,8 @@ CREATE TABLE api_tokens (
 
 - Encrypted secret values (AES-256-GCM ciphertext)
 - Encrypted data keys (wrapped with the master key)
-- Secret metadata (name, labels, timestamps)
-- API token hashes (SHA-256; plaintext tokens are never stored)
+- Secret metadata (name, environment, metadata, timestamps)
+- API token hashes (HMAC-SHA256 with salt; plaintext tokens are never stored)
 
 **What is NOT stored in the database:**
 
@@ -122,7 +125,7 @@ CREATE TABLE api_tokens (
 API tokens for the REST server use:
 
 - **Format:** `mvt_` prefix + 64 hex characters (32 random bytes)
-- **Storage:** SHA-256 hash of the token is stored in the database
+- **Storage:** HMAC-SHA256 hash with per-token salt is stored in the database (legacy tokens validated with plain SHA-256 for backward compatibility)
 - **Scopes:** `read`, `write`, `generate`, `admin` (admin grants all)
 - **Expiry:** Optional, checked on each request
 - **Last used:** Updated asynchronously on each successful authentication

@@ -68,11 +68,15 @@ var (
 	MaskedValueStyle = lipgloss.NewStyle().
 				Foreground(ColorMuted)
 
-	// Label renders key=value labels.
-	LabelKeyStyle = lipgloss.NewStyle().
-			Foreground(ColorMagenta)
-	LabelValueStyle = lipgloss.NewStyle().
-			Foreground(ColorWhite)
+	// Metadata renders key=value metadata (replaces old Label styles).
+	MetadataKeyStyle = lipgloss.NewStyle().
+				Foreground(ColorMagenta)
+	MetadataValueStyle = lipgloss.NewStyle().
+				Foreground(ColorWhite)
+
+	// Environment badge shown next to secret names in list view.
+	EnvBadgeStyle = lipgloss.NewStyle().
+			Foreground(ColorYellow)
 
 	// Muted text for timestamps, hints, etc.
 	MutedStyle = lipgloss.NewStyle().

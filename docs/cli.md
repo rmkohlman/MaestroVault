@@ -29,14 +29,18 @@ Store or update a secret.
 
 ```bash
 maestrovault set db-password --value "s3cret"
-maestrovault set api-key --value "sk-123" --label env=prod --label service=api
+maestrovault set api-key --value "sk-123" --env prod --metadata service=api
 echo "piped-value" | maestrovault set token-name
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--value`, `-v` | Secret value (reads from stdin if omitted) |
-| `--label`, `-l` | Labels as `key=value` (repeatable) |
+| `--metadata`, `-m` | Metadata as `key=value` (repeatable) |
+| `--env`, `-e` | Environment (e.g. dev, staging, prod) |
+| `--generate`, `-g` | Auto-generate a random password as the value |
+| `--length` | Generated password length (with `--generate`, default: 32) |
+| `--symbols` | Include symbols in generated password (with `--generate`) |
 
 ---
 
@@ -46,8 +50,15 @@ Retrieve and decrypt a secret.
 
 ```bash
 maestrovault get db-password
+maestrovault get db-password --env prod
 maestrovault get db-password -o json
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--quiet`, `-q` | Print only the value (for piping) |
+| `--clip`, `-c` | Copy value to clipboard (auto-clears in 45s) |
+| `--env`, `-e` | Environment (e.g. dev, staging, prod) |
 
 Shell completion is available for secret names.
 
@@ -59,13 +70,17 @@ List all secrets (values are not shown).
 
 ```bash
 maestrovault list
-maestrovault list --label env=prod
+maestrovault list --env prod
+maestrovault list --metadata-key service --metadata-value postgres
 maestrovault list -o json
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--label`, `-l` | Filter by label `key=value` |
+| `--filter`, `-f` | Filter secrets by name or metadata content |
+| `--metadata-key` | Filter by metadata key |
+| `--metadata-value` | Filter by metadata value (used with `--metadata-key`) |
+| `--env`, `-e` | Environment (e.g. dev, staging, prod) |
 
 ---
 
@@ -81,22 +96,24 @@ maestrovault delete old-key --force
 | Flag | Description |
 |------|-------------|
 | `--force`, `-f` | Skip confirmation prompt |
+| `--env`, `-e` | Environment (e.g. dev, staging, prod) |
 
 ---
 
 ## `maestrovault edit <name>`
 
-Update an existing secret's value or labels.
+Update an existing secret's value or metadata.
 
 ```bash
 maestrovault edit db-password --value "new-password"
-maestrovault edit api-key --label env=staging
+maestrovault edit api-key --metadata env=staging
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--value`, `-v` | New value (keeps existing if omitted) |
-| `--label`, `-l` | New labels (keeps existing if omitted) |
+| `--metadata`, `-m` | New metadata as `key=value` (replaces all metadata; keeps existing if omitted) |
+| `--env`, `-e` | Environment (e.g. dev, staging, prod) |
 
 ---
 
@@ -112,12 +129,13 @@ maestrovault copy db-password --clear 10s
 | Flag | Description |
 |------|-------------|
 | `--clear`, `-c` | Auto-clear clipboard after duration (default: `45s`) |
+| `--env`, `-e` | Environment (e.g. dev, staging, prod) |
 
 ---
 
 ## `maestrovault search <query>`
 
-Search secrets by name and label keys/values.
+Search secrets by name, environment, and metadata.
 
 ```bash
 maestrovault search postgres
@@ -144,7 +162,12 @@ maestrovault generate --no-symbols --no-uppercase
 | `--no-lowercase` | Exclude lowercase letters |
 | `--no-digits` | Exclude digits |
 | `--no-symbols` | Exclude symbols |
-| `--label`, `-l` | Labels if storing (repeatable) |
+| `--metadata`, `-m` | Metadata for stored secret (with `--name`, repeatable) |
+| `--env`, `-e` | Environment (e.g. dev, staging, prod) |
+| `--clip`, `-c` | Copy to clipboard |
+| `--passphrase` | Generate a passphrase instead of a password |
+| `--words` | Number of words in passphrase (with `--passphrase`, default: 5) |
+| `--delimiter` | Word delimiter for passphrase (with `--passphrase`, default: `-`) |
 
 ---
 

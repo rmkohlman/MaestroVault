@@ -6,10 +6,10 @@
 //	c, err := client.New("mvt_abc123...")
 //	if err != nil { ... }
 //
-//	secret, err := c.Get("my-secret")
-//	entries, err := c.List()
-//	err = c.Set("key", "value", nil)
-//	err = c.Delete("key")
+//	secret, err := c.Get("my-secret", "production")
+//	entries, err := c.List("production")
+//	err = c.Set("key", "production", "value", nil)
+//	err = c.Delete("key", "production")
 package client
 
 import (
@@ -20,6 +20,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -95,11 +96,12 @@ func New(token string, opts ...Option) (*Client, error) {
 
 // SecretEntry represents a secret returned by the API.
 type SecretEntry struct {
-	Name      string            `json:"Name"`
-	Value     string            `json:"Value,omitempty"`
-	Labels    map[string]string `json:"Labels,omitempty"`
-	CreatedAt string            `json:"CreatedAt,omitempty"`
-	UpdatedAt string            `json:"UpdatedAt,omitempty"`
+	Name        string         `json:"name"`
+	Environment string         `json:"environment"`
+	Value       string         `json:"value,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
 }
 
 // VaultInfo contains metadata about the vault.
@@ -119,13 +121,14 @@ type GenerateResult struct {
 
 // GenerateOpts configures password generation.
 type GenerateOpts struct {
-	Name      string            `json:"name,omitempty"`
-	Length    int               `json:"length,omitempty"`
-	Uppercase *bool             `json:"uppercase,omitempty"`
-	Lowercase *bool             `json:"lowercase,omitempty"`
-	Digits    *bool             `json:"digits,omitempty"`
-	Symbols   *bool             `json:"symbols,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
+	Name        string         `json:"name,omitempty"`
+	Environment string         `json:"environment,omitempty"`
+	Length      int            `json:"length,omitempty"`
+	Uppercase   *bool          `json:"uppercase,omitempty"`
+	Lowercase   *bool          `json:"lowercase,omitempty"`
+	Digits      *bool          `json:"digits,omitempty"`
+	Symbols     *bool          `json:"symbols,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 // TokenInfo represents an API token (without the plaintext).
@@ -150,28 +153,36 @@ type CreateTokenResult struct {
 // ── Secrets CRUD ──────────────────────────────────────────────
 
 // Get retrieves a secret by name (with decrypted value).
-func (c *Client) Get(name string) (*SecretEntry, error) {
+func (c *Client) Get(name, env string) (*SecretEntry, error) {
+	path := "/v1/secrets/" + name
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
 	var entry SecretEntry
-	if err := c.doJSON("GET", "/v1/secrets/"+name, nil, &entry); err != nil {
+	if err := c.doJSON("GET", path, nil, &entry); err != nil {
 		return nil, err
 	}
 	return &entry, nil
 }
 
 // List returns metadata for all secrets.
-func (c *Client) List() ([]SecretEntry, error) {
+func (c *Client) List(env string) ([]SecretEntry, error) {
+	path := "/v1/secrets"
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
 	var entries []SecretEntry
-	if err := c.doJSON("GET", "/v1/secrets", nil, &entries); err != nil {
+	if err := c.doJSON("GET", path, nil, &entries); err != nil {
 		return nil, err
 	}
 	return entries, nil
 }
 
-// ListByLabel returns secrets matching a label key and optional value.
-func (c *Client) ListByLabel(key, value string) ([]SecretEntry, error) {
-	path := "/v1/secrets?label_key=" + key
+// ListByMetadata returns secrets matching a metadata key and optional value.
+func (c *Client) ListByMetadata(key, value string) ([]SecretEntry, error) {
+	path := "/v1/secrets?metadata_key=" + url.QueryEscape(key)
 	if value != "" {
-		path += "&label_value=" + value
+		path += "&metadata_value=" + url.QueryEscape(value)
 	}
 	var entries []SecretEntry
 	if err := c.doJSON("GET", path, nil, &entries); err != nil {
@@ -181,31 +192,43 @@ func (c *Client) ListByLabel(key, value string) ([]SecretEntry, error) {
 }
 
 // Set stores or updates a secret.
-func (c *Client) Set(name, value string, labels map[string]string) error {
+func (c *Client) Set(name, env, value string, metadata map[string]any) error {
+	path := "/v1/secrets/" + name
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
 	body := map[string]interface{}{
 		"value": value,
 	}
-	if labels != nil {
-		body["labels"] = labels
+	if metadata != nil {
+		body["metadata"] = metadata
 	}
-	return c.doJSON("PUT", "/v1/secrets/"+name, body, nil)
+	return c.doJSON("PUT", path, body, nil)
 }
 
-// Edit updates a secret's value and/or labels. Nil fields are preserved.
-func (c *Client) Edit(name string, value *string, labels map[string]string) error {
+// Edit updates a secret's value and/or metadata. Nil fields are preserved.
+func (c *Client) Edit(name, env string, value *string, metadata map[string]any) error {
+	path := "/v1/secrets/" + name
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
 	body := map[string]interface{}{}
 	if value != nil {
 		body["value"] = *value
 	}
-	if labels != nil {
-		body["labels"] = labels
+	if metadata != nil {
+		body["metadata"] = metadata
 	}
-	return c.doJSON("PATCH", "/v1/secrets/"+name, body, nil)
+	return c.doJSON("PATCH", path, body, nil)
 }
 
 // Delete removes a secret.
-func (c *Client) Delete(name string) error {
-	return c.doJSON("DELETE", "/v1/secrets/"+name, nil, nil)
+func (c *Client) Delete(name, env string) error {
+	path := "/v1/secrets/" + name
+	if env != "" {
+		path += "?env=" + url.QueryEscape(env)
+	}
+	return c.doJSON("DELETE", path, nil, nil)
 }
 
 // ── Search ────────────────────────────────────────────────────

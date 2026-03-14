@@ -64,6 +64,25 @@ import (
 	"unsafe"
 )
 
+// DarwinAuthenticator implements Authenticator using macOS TouchID.
+type DarwinAuthenticator struct{}
+
+// New returns an Authenticator for the current platform (macOS: TouchID).
+func New() Authenticator { return &DarwinAuthenticator{} }
+
+// Compile-time assertion.
+var _ Authenticator = (*DarwinAuthenticator)(nil)
+
+func (d *DarwinAuthenticator) Available() (bool, error) {
+	return Available()
+}
+
+func (d *DarwinAuthenticator) Authenticate(reason string) error {
+	return Authenticate(reason)
+}
+
+// ── Package-level functions (backward compatibility) ─────────
+
 // Available reports whether TouchID (biometric authentication) is available
 // on this device.
 func Available() (bool, error) {

@@ -29,7 +29,8 @@ The TUI uses ANSI palette colors (0-15), which means it automatically inherits y
 The main screen shows all secrets in a scrollable list with:
 
 - Name
-- Labels (as colored key=value pairs)
+- Environment badge
+- Metadata (as colored key=value pairs)
 - Created/updated timestamps
 
 ### Secret Detail
@@ -87,7 +88,7 @@ Press `?` to see all available keybindings.
 | `Enter` | Confirm search |
 | `Esc` | Cancel search |
 
-The search filters secrets by name and label text in real time.
+The search filters secrets by name, environment, and metadata text in real time.
 
 ### Toast Notifications
 

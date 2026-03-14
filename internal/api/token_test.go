@@ -9,7 +9,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// testDB opens an in-memory SQLite database with the api_tokens table.
+// testDB opens an in-memory SQLite database with the api_tokens table
+// including the salt column for HMAC-SHA256 token hashing.
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
@@ -24,7 +25,8 @@ func testDB(t *testing.T) *sql.DB {
 		CREATE TABLE IF NOT EXISTS api_tokens (
 			id           TEXT PRIMARY KEY,
 			name         TEXT NOT NULL,
-			token_hash   TEXT UNIQUE NOT NULL,
+			token_hash   TEXT NOT NULL,
+			salt         TEXT NOT NULL DEFAULT '',
 			scopes       TEXT NOT NULL DEFAULT '[]',
 			created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			expires_at   DATETIME,
@@ -264,5 +266,57 @@ func TestValidScope(t *testing.T) {
 	}
 	if ValidScope("") {
 		t.Error("empty should not be valid")
+	}
+}
+
+// TestTokenLegacyValidation verifies that tokens stored with plain SHA-256
+// (empty salt) can still be validated after the HMAC-SHA256 upgrade.
+func TestTokenLegacyValidation(t *testing.T) {
+	db := testDB(t)
+	ts := NewTokenStore(db)
+
+	// Manually insert a legacy token (no salt, plain SHA-256 hash).
+	plaintext := "mvt_legacy_test_token_0000000000000000000000000000000000000000"
+	legacyHash := hashToken(plaintext)
+
+	_, err := db.Exec(`
+		INSERT INTO api_tokens (id, name, token_hash, salt, scopes, created_at)
+		VALUES ('legacy-id', 'legacy-token', ?, '', '["read"]', CURRENT_TIMESTAMP)
+	`, legacyHash)
+	if err != nil {
+		t.Fatalf("inserting legacy token: %v", err)
+	}
+
+	// Should validate using legacy SHA-256 path.
+	tok, err := ts.Validate(plaintext)
+	if err != nil {
+		t.Fatalf("Validate legacy token: %v", err)
+	}
+	if tok.ID != "legacy-id" {
+		t.Errorf("legacy token ID: want %q, got %q", "legacy-id", tok.ID)
+	}
+	if tok.Name != "legacy-token" {
+		t.Errorf("legacy token name: want %q, got %q", "legacy-token", tok.Name)
+	}
+}
+
+// TestHashTokenWithSalt verifies HMAC-SHA256 produces deterministic output.
+func TestHashTokenWithSalt(t *testing.T) {
+	salt := []byte("testsalt12345678")
+	h1 := hashTokenWithSalt("mvt_test", salt)
+	h2 := hashTokenWithSalt("mvt_test", salt)
+
+	if h1 != h2 {
+		t.Error("same input should produce same hash")
+	}
+
+	h3 := hashTokenWithSalt("mvt_other", salt)
+	if h1 == h3 {
+		t.Error("different input should produce different hash")
+	}
+
+	h4 := hashTokenWithSalt("mvt_test", []byte("differentsalt!!!"))
+	if h1 == h4 {
+		t.Error("different salt should produce different hash")
 	}
 }

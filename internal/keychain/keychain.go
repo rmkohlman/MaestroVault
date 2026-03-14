@@ -1,6 +1,12 @@
 // Package keychain provides macOS Keychain integration for storing and
 // retrieving the MaestroVault master key. The master key never leaves
 // the Keychain in plaintext except when actively encrypting/decrypting.
+//
+// The Provider interface is the contract for all keychain operations.
+// MacOSKeychain is the concrete implementation using github.com/keybase/go-keychain.
+//
+// Package-level functions are preserved for backward compatibility and
+// delegate to a default MacOSKeychain instance.
 package keychain
 
 import (
@@ -14,6 +20,54 @@ const (
 	account = "master-key"
 	label   = "MaestroVault Master Key"
 )
+
+// ── Interface ────────────────────────────────────────────────
+
+// Provider defines the contract for master key storage.
+// The master key is the root of the envelope encryption hierarchy.
+type Provider interface {
+	// StoreMasterKey stores the master key, replacing any existing one.
+	StoreMasterKey(key []byte) error
+
+	// RetrieveMasterKey retrieves the master key.
+	RetrieveMasterKey() ([]byte, error)
+
+	// DeleteMasterKey removes the master key.
+	DeleteMasterKey() error
+
+	// MasterKeyExists reports whether a master key is stored.
+	MasterKeyExists() bool
+}
+
+// ── Concrete implementation ──────────────────────────────────
+
+// MacOSKeychain implements Provider using the macOS Keychain via
+// github.com/keybase/go-keychain.
+type MacOSKeychain struct{}
+
+// New returns a Provider backed by the macOS Keychain.
+func New() Provider { return &MacOSKeychain{} }
+
+// Compile-time assertion: *MacOSKeychain implements Provider.
+var _ Provider = (*MacOSKeychain)(nil)
+
+func (k *MacOSKeychain) StoreMasterKey(key []byte) error {
+	return StoreMasterKey(key)
+}
+
+func (k *MacOSKeychain) RetrieveMasterKey() ([]byte, error) {
+	return RetrieveMasterKey()
+}
+
+func (k *MacOSKeychain) DeleteMasterKey() error {
+	return DeleteMasterKey()
+}
+
+func (k *MacOSKeychain) MasterKeyExists() bool {
+	return MasterKeyExists()
+}
+
+// ── Package-level functions (backward compatibility) ─────────
 
 // StoreMasterKey stores the master key in the macOS Keychain.
 // If a key already exists, it is replaced.

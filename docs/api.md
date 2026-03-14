@@ -74,19 +74,20 @@ GET /v1/secrets
 
 | Parameter | Description |
 |-----------|-------------|
-| `label_key` | Filter by label key |
-| `label_value` | Filter by label value (requires `label_key`) |
+| `env` | Filter by environment |
+| `metadata_key` | Filter by metadata key |
+| `metadata_value` | Filter by metadata value (requires `metadata_key`) |
 
 **Response:**
 
 ```json
 [
   {
-    "Name": "db-password",
-    "Value": "",
-    "Labels": {"env": "prod"},
-    "CreatedAt": "2026-03-13 10:00:00",
-    "UpdatedAt": "2026-03-13 10:00:00"
+    "name": "db-password",
+    "environment": "prod",
+    "metadata": {"service": "postgres"},
+    "created_at": "2026-03-13T10:00:00Z",
+    "updated_at": "2026-03-13T10:00:00Z"
   }
 ]
 ```
@@ -104,15 +105,22 @@ GET /v1/secrets/{name}
 
 **Scope:** `read`
 
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
 **Response:**
 
 ```json
 {
-  "Name": "db-password",
-  "Value": "s3cret",
-  "Labels": {"env": "prod"},
-  "CreatedAt": "2026-03-13 10:00:00",
-  "UpdatedAt": "2026-03-13 10:00:00"
+  "name": "db-password",
+  "environment": "prod",
+  "value": "s3cret",
+  "metadata": {"service": "postgres"},
+  "created_at": "2026-03-13T10:00:00Z",
+  "updated_at": "2026-03-13T10:00:00Z"
 }
 ```
 
@@ -126,12 +134,18 @@ PUT /v1/secrets/{name}
 
 **Scope:** `write`
 
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
 **Request Body:**
 
 ```json
 {
   "value": "my-secret-value",
-  "labels": {"env": "prod", "service": "api"}
+  "metadata": {"service": "api", "team": "backend"}
 }
 ```
 
@@ -156,12 +170,18 @@ PATCH /v1/secrets/{name}
 
 Partial update -- omitted fields are preserved.
 
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
 **Request Body:**
 
 ```json
 {
   "value": "new-value",
-  "labels": {"env": "staging"}
+  "metadata": {"service": "api"}
 }
 ```
 
@@ -184,6 +204,12 @@ DELETE /v1/secrets/{name}
 
 **Scope:** `write`
 
+**Query Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `env` | Environment (default: empty string) |
+
 **Response:**
 
 ```json
@@ -203,7 +229,7 @@ GET /v1/search?q={query}
 
 **Scope:** `read`
 
-Searches secret names and label keys/values.
+Searches secret names, environments, and metadata.
 
 **Response:** Same format as List Secrets.
 
@@ -222,16 +248,17 @@ POST /v1/generate
 ```json
 {
   "name": "wifi-password",
+  "environment": "home",
   "length": 24,
   "uppercase": true,
   "lowercase": true,
   "digits": true,
   "symbols": false,
-  "labels": {"type": "wifi"}
+  "metadata": {"type": "wifi"}
 }
 ```
 
-All fields are optional. Defaults: length 32, all character sets enabled. If `name` is provided, the password is stored as a secret.
+All fields are optional. Defaults: length 32, all character sets enabled. If `name` is provided, the password is stored as a secret. Include `environment` to scope the stored secret.
 
 **Response:**
 
@@ -374,17 +401,17 @@ Since the API uses a Unix socket, use curl's `--unix-socket` flag:
 curl --unix-socket ~/.maestrovault/maestrovault.sock \
   http://localhost/v1/health
 
-# Get a secret
+# Get a secret (with environment)
 curl --unix-socket ~/.maestrovault/maestrovault.sock \
   -H "Authorization: Bearer mvt_your_token_here" \
-  http://localhost/v1/secrets/db-password
+  http://localhost/v1/secrets/db-password?env=prod
 
 # Store a secret
 curl --unix-socket ~/.maestrovault/maestrovault.sock \
   -H "Authorization: Bearer mvt_your_token_here" \
   -X PUT \
-  -d '{"value": "s3cret", "labels": {"env": "dev"}}' \
-  http://localhost/v1/secrets/my-key
+  -d '{"value": "s3cret", "metadata": {"service": "db"}}' \
+  http://localhost/v1/secrets/my-key?env=dev
 ```
 
 ## Socket Security

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -24,6 +25,21 @@ func tokenFromContext(ctx context.Context) *Token {
 	return tok
 }
 
+// ── Error mapping ─────────────────────────────────────────────
+
+// writeVaultError maps vault sentinel errors to appropriate HTTP status codes.
+func writeVaultError(w http.ResponseWriter, err error) {
+	if errors.Is(err, vault.ErrNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, vault.ErrAlreadyExists) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
 // ── Health ────────────────────────────────────────────────────
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -35,28 +51,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // ── Secrets CRUD ──────────────────────────────────────────────
 
-// GET /v1/secrets?label_key=&label_value=
+// GET /v1/secrets?env=&metadata_key=&metadata_value=
 func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request) {
-	labelKey := r.URL.Query().Get("label_key")
-	labelValue := r.URL.Query().Get("label_value")
+	env := r.URL.Query().Get("env")
+	metadataKey := r.URL.Query().Get("metadata_key")
+	metadataValue := r.URL.Query().Get("metadata_value")
 
 	var entries []vault.SecretEntry
 	var err error
 
-	if labelKey != "" {
-		entries, err = s.vault.ListByLabel(labelKey, labelValue)
+	if metadataKey != "" {
+		entries, err = s.vault.ListByMetadata(r.Context(), metadataKey, metadataValue)
 	} else {
-		entries, err = s.vault.List()
+		entries, err = s.vault.List(r.Context(), env)
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeVaultError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, entries)
+	writeJSON(w, http.StatusOK, secretsToResponse(entries))
 }
 
-// GET /v1/secrets/{name}
+// GET /v1/secrets/{name}?env=
 func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
@@ -64,28 +81,32 @@ func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, err := s.vault.Get(name)
+	env := r.URL.Query().Get("env")
+
+	entry, err := s.vault.Get(r.Context(), name, env)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeVaultError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, entry)
+	writeJSON(w, http.StatusOK, secretToResponse(*entry))
 }
 
 // setSecretRequest is the body for PUT /v1/secrets/{name}.
 type setSecretRequest struct {
-	Value  string            `json:"value"`
-	Labels map[string]string `json:"labels,omitempty"`
+	Value    string         `json:"value"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// PUT /v1/secrets/{name}
+// PUT /v1/secrets/{name}?env=
 func (s *Server) handleSetSecret(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "secret name is required")
 		return
 	}
+
+	env := r.URL.Query().Get("env")
 
 	var req setSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -97,8 +118,8 @@ func (s *Server) handleSetSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.vault.Set(name, req.Value, req.Labels); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := s.vault.Set(r.Context(), name, env, req.Value, req.Metadata); err != nil {
+		writeVaultError(w, err)
 		return
 	}
 
@@ -110,11 +131,11 @@ func (s *Server) handleSetSecret(w http.ResponseWriter, r *http.Request) {
 
 // editSecretRequest is the body for PATCH /v1/secrets/{name}.
 type editSecretRequest struct {
-	Value  *string           `json:"value,omitempty"`
-	Labels map[string]string `json:"labels,omitempty"`
+	Value    *string        `json:"value,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// PATCH /v1/secrets/{name}
+// PATCH /v1/secrets/{name}?env=
 func (s *Server) handleEditSecret(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
@@ -122,19 +143,16 @@ func (s *Server) handleEditSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	env := r.URL.Query().Get("env")
+
 	var req editSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	newValue := ""
-	if req.Value != nil {
-		newValue = *req.Value
-	}
-
-	if err := s.vault.Edit(name, newValue, req.Labels); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := s.vault.Edit(r.Context(), name, env, req.Value, req.Metadata); err != nil {
+		writeVaultError(w, err)
 		return
 	}
 
@@ -144,7 +162,7 @@ func (s *Server) handleEditSecret(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DELETE /v1/secrets/{name}
+// DELETE /v1/secrets/{name}?env=
 func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
@@ -152,8 +170,10 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.vault.Delete(name); err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+	env := r.URL.Query().Get("env")
+
+	if err := s.vault.Delete(r.Context(), name, env); err != nil {
+		writeVaultError(w, err)
 		return
 	}
 
@@ -173,26 +193,27 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := s.vault.Search(query)
+	entries, err := s.vault.Search(r.Context(), query)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeVaultError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, entries)
+	writeJSON(w, http.StatusOK, secretsToResponse(entries))
 }
 
 // ── Generate ──────────────────────────────────────────────────
 
 // generateRequest is the body for POST /v1/generate.
 type generateRequest struct {
-	Name      string            `json:"name,omitempty"`
-	Length    int               `json:"length,omitempty"`
-	Uppercase *bool             `json:"uppercase,omitempty"`
-	Lowercase *bool             `json:"lowercase,omitempty"`
-	Digits    *bool             `json:"digits,omitempty"`
-	Symbols   *bool             `json:"symbols,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
+	Name        string         `json:"name,omitempty"`
+	Environment string         `json:"environment,omitempty"`
+	Length      int            `json:"length,omitempty"`
+	Uppercase   *bool          `json:"uppercase,omitempty"`
+	Lowercase   *bool          `json:"lowercase,omitempty"`
+	Digits      *bool          `json:"digits,omitempty"`
+	Symbols     *bool          `json:"symbols,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 type generateResponse struct {
@@ -220,9 +241,9 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		opts.Length = 32
 	}
 
-	password, err := s.vault.Generate(req.Name, opts, req.Labels)
+	password, err := s.vault.Generate(r.Context(), req.Name, req.Environment, opts, req.Metadata)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeVaultError(w, err)
 		return
 	}
 
@@ -242,27 +263,15 @@ func boolDefault(b *bool, def bool) bool {
 
 // ── Vault info ────────────────────────────────────────────────
 
-type infoResponse struct {
-	Dir         string `json:"dir"`
-	DBPath      string `json:"db_path"`
-	DBSize      int64  `json:"db_size_bytes"`
-	SecretCount int    `json:"secret_count"`
-}
-
 // GET /v1/info
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
-	info, err := s.vault.Info()
+	info, err := s.vault.Info(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeVaultError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, infoResponse{
-		Dir:         info.Dir,
-		DBPath:      info.DBPath,
-		DBSize:      info.DBSize,
-		SecretCount: info.SecretCount,
-	})
+	writeJSON(w, http.StatusOK, info)
 }
 
 // ── Token management ──────────────────────────────────────────

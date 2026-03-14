@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"time"
@@ -20,7 +21,9 @@ const (
 	screenList screen = iota
 	screenDetail
 	screenSetName
+	screenSetEnv
 	screenSetValue
+	screenSetMetadata
 	screenConfirmDelete
 )
 
@@ -144,11 +147,18 @@ func (g *genState) opts() crypto.GenerateOpts {
 	}
 }
 
+// ── secretRef identifies a secret by name + environment ───────
+
+type secretRef struct {
+	Name        string
+	Environment string
+}
+
 // ── Model ─────────────────────────────────────────────────────
 
 // Model is the top-level Bubbletea model for MaestroVault.
 type Model struct {
-	vault   *vault.Vault
+	vault   vault.Vault         // interface (not pointer)
 	secrets []vault.SecretEntry // full list from vault
 	display []vault.SecretEntry // sorted + filtered view
 	err     error
@@ -167,10 +177,13 @@ type Model struct {
 	visualAnchor int
 
 	// Text inputs for the set/edit flow.
-	nameInput  textinput.Model
-	valueInput textinput.Model
-	editing    bool   // true when editing existing secret
-	editName   string // original name of secret being edited
+	nameInput     textinput.Model
+	envInput      textinput.Model
+	valueInput    textinput.Model
+	metadataInput textinput.Model
+	editing       bool   // true when editing existing secret
+	editName      string // original name of secret being edited
+	editEnv       string // original environment of secret being edited
 
 	// Search.
 	searchActive bool
@@ -178,6 +191,9 @@ type Model struct {
 
 	// Detail view.
 	valueMasked bool // value masked by default in detail view
+
+	// Selected secret tracking (name + environment).
+	selectedEnv string // environment of the currently selected secret
 
 	// Sort.
 	sortOrder SortOrder
@@ -203,31 +219,41 @@ type Opts struct {
 }
 
 // New creates a new TUI model backed by an open vault.
-func New(v *vault.Vault, opts Opts) Model {
+func New(v vault.Vault, opts Opts) Model {
 	ni := textinput.New()
 	ni.Placeholder = "secret-name"
 	ni.CharLimit = 128
+
+	ei := textinput.New()
+	ei.Placeholder = "environment (e.g. production, staging — leave empty for default)"
+	ei.CharLimit = 128
 
 	vi := textinput.New()
 	vi.Placeholder = "secret value"
 	vi.CharLimit = 4096
 	vi.EchoMode = textinput.EchoPassword
 
+	mi := textinput.New()
+	mi.Placeholder = "key=value, key=value (optional)"
+	mi.CharLimit = 4096
+
 	si := textinput.New()
 	si.Placeholder = "search..."
 	si.CharLimit = 128
 
 	return Model{
-		vault:       v,
-		screen:      screenList,
-		vimEnabled:  opts.VimMode,
-		mode:        ModeNormal,
-		nameInput:   ni,
-		valueInput:  vi,
-		searchInput: si,
-		valueMasked: true,
-		sortOrder:   SortNameAsc,
-		gen:         newGenState(),
+		vault:         v,
+		screen:        screenList,
+		vimEnabled:    opts.VimMode,
+		mode:          ModeNormal,
+		nameInput:     ni,
+		envInput:      ei,
+		valueInput:    vi,
+		metadataInput: mi,
+		searchInput:   si,
+		valueMasked:   true,
+		sortOrder:     SortNameAsc,
+		gen:           newGenState(),
 	}
 }
 
@@ -247,9 +273,9 @@ type clipboardMsg struct{ name string }
 
 // ── Commands ──────────────────────────────────────────────────
 
-func loadSecrets(v *vault.Vault) tea.Cmd {
+func loadSecrets(v vault.Vault) tea.Cmd {
 	return func() tea.Msg {
-		secrets, err := v.List()
+		secrets, err := v.List(context.Background(), "") // all environments
 		if err != nil {
 			return errMsg{err}
 		}
@@ -257,9 +283,9 @@ func loadSecrets(v *vault.Vault) tea.Cmd {
 	}
 }
 
-func getSecret(v *vault.Vault, name string) tea.Cmd {
+func getSecret(v vault.Vault, name, env string) tea.Cmd {
 	return func() tea.Msg {
-		entry, err := v.Get(name)
+		entry, err := v.Get(context.Background(), name, env)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -267,38 +293,38 @@ func getSecret(v *vault.Vault, name string) tea.Cmd {
 	}
 }
 
-func setSecret(v *vault.Vault, name, value string, labels map[string]string) tea.Cmd {
+func setSecret(v vault.Vault, name, env, value string, metadata map[string]any) tea.Cmd {
 	return func() tea.Msg {
-		if err := v.Set(name, value, labels); err != nil {
+		if err := v.Set(context.Background(), name, env, value, metadata); err != nil {
 			return errMsg{err}
 		}
 		return statusMsg{fmt.Sprintf("Secret %q stored.", name)}
 	}
 }
 
-func deleteSecret(v *vault.Vault, name string) tea.Cmd {
+func deleteSecret(v vault.Vault, name, env string) tea.Cmd {
 	return func() tea.Msg {
-		if err := v.Delete(name); err != nil {
+		if err := v.Delete(context.Background(), name, env); err != nil {
 			return errMsg{err}
 		}
 		return statusMsg{fmt.Sprintf("Secret %q deleted.", name)}
 	}
 }
 
-func deleteSecrets(v *vault.Vault, names []string) tea.Cmd {
+func deleteSecrets(v vault.Vault, refs []secretRef) tea.Cmd {
 	return func() tea.Msg {
-		for _, name := range names {
-			if err := v.Delete(name); err != nil {
+		for _, ref := range refs {
+			if err := v.Delete(context.Background(), ref.Name, ref.Environment); err != nil {
 				return errMsg{err}
 			}
 		}
-		return statusMsg{fmt.Sprintf("%d secret(s) deleted.", len(names))}
+		return statusMsg{fmt.Sprintf("%d secret(s) deleted.", len(refs))}
 	}
 }
 
-func copyToClipboard(v *vault.Vault, name string) tea.Cmd {
+func copyToClipboard(v vault.Vault, name, env string) tea.Cmd {
 	return func() tea.Msg {
-		entry, err := v.Get(name)
+		entry, err := v.Get(context.Background(), name, env)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -309,9 +335,9 @@ func copyToClipboard(v *vault.Vault, name string) tea.Cmd {
 	}
 }
 
-func loadVaultInfo(v *vault.Vault) tea.Cmd {
+func loadVaultInfo(v vault.Vault) tea.Cmd {
 	return func() tea.Msg {
-		info, err := v.Info()
+		info, err := v.Info(context.Background())
 		if err != nil {
 			return errMsg{err}
 		}
@@ -356,10 +382,16 @@ func sortSecrets(secrets []vault.SecretEntry, order SortOrder) {
 	switch order {
 	case SortNameAsc:
 		sort.Slice(secrets, func(i, j int) bool {
+			if secrets[i].Name == secrets[j].Name {
+				return secrets[i].Environment < secrets[j].Environment
+			}
 			return secrets[i].Name < secrets[j].Name
 		})
 	case SortNameDesc:
 		sort.Slice(secrets, func(i, j int) bool {
+			if secrets[i].Name == secrets[j].Name {
+				return secrets[i].Environment > secrets[j].Environment
+			}
 			return secrets[i].Name > secrets[j].Name
 		})
 	case SortNewest:

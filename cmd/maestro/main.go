@@ -9,7 +9,7 @@
 //	maestrovault delete <name>         Delete a secret
 //	maestrovault edit <name>           Edit an existing secret
 //	maestrovault copy <name>           Copy a secret to the clipboard
-//	maestrovault search <query>        Search secrets by name or labels
+//	maestrovault search <query>        Search secrets by name or metadata
 //	maestrovault generate              Generate a random password
 //	maestrovault env                   Export secrets as environment variables
 //	maestrovault exec -- <cmd>         Run a command with secrets injected as env vars
@@ -28,11 +28,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -109,23 +111,64 @@ The master key is stored securely in the macOS Keychain.`,
 	return root
 }
 
+// ── withVault helper ──────────────────────────────────────────
+
+// withVault handles config loading, TouchID authentication, vault opening,
+// and cleanup. All commands that need an open vault should use this instead
+// of calling vault.Open directly.
+func withVault(fn func(context.Context, vault.Vault) error) error {
+	ctx := context.Background()
+
+	// Load config and check TouchID.
+	cfg, err := vault.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	if cfg.TouchID {
+		auth := touchid.New()
+		if err := auth.Authenticate("MaestroVault wants to access your secrets"); err != nil {
+			return fmt.Errorf("authentication required: %w", err)
+		}
+	}
+
+	// Open vault (no TouchID inside — we handled it above).
+	v, err := vault.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer v.Close()
+
+	return fn(ctx, v)
+}
+
 // --- Secret name completion helper ---
 
 func secretNameCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) != 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	v, err := vault.Open()
+	ctx := context.Background()
+	v, err := vault.Open(ctx)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	defer v.Close()
 
-	names, err := v.Names()
+	names, err := v.Names(ctx)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return names, cobra.ShellCompDirectiveNoFileComp
+
+	// Deduplicate by name (env handled by --env flag).
+	seen := make(map[string]bool)
+	var result []string
+	for _, n := range names {
+		if !seen[n.Name] {
+			seen[n.Name] = true
+			result = append(result, n.Name)
+		}
+	}
+	return result, cobra.ShellCompDirectiveNoFileComp
 }
 
 // --- Commands ---
@@ -162,8 +205,9 @@ func newInitCmd() *cobra.Command {
 		Short: "Initialize a new vault",
 		Long:  "Creates the vault directory, generates a master key, and stores it securely in the macOS Keychain.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := vault.Init(); err != nil {
-				printError(err.Error(), "If the vault already exists, use 'maestro destroy' first to reset it.")
+			ctx := context.Background()
+			if err := vault.Init(ctx); err != nil {
+				printError(err.Error(), "If the vault already exists, use 'maestrovault destroy' first to reset it.")
 				return err
 			}
 			printSuccess("Vault initialized successfully.")
@@ -177,7 +221,7 @@ func newInitCmd() *cobra.Command {
 func newSetCmd() *cobra.Command {
 	var (
 		valueFlag  string
-		labels     []string
+		metadata   []string
 		generatePw bool
 		genLength  int
 		genSymbols bool
@@ -222,29 +266,30 @@ func newSetCmd() *cobra.Command {
 				return fmt.Errorf("empty value")
 			}
 
-			labelMap := parseLabels(labels)
-
-			v, err := vault.Open()
+			metadataMap, err := parseMetadata(metadata)
 			if err != nil {
-				printError(err.Error(), "Run 'maestro init' to create a new vault.")
-				return err
-			}
-			defer v.Close()
-
-			if err := v.Set(name, value, labelMap); err != nil {
 				return err
 			}
 
-			printSuccess(fmt.Sprintf("Secret %q stored.", name))
-			if generatePw {
-				fmt.Printf("  %s  %s\n", colorize("Generated:", ansiDim), colorize(value, ansiGreen))
-			}
-			return nil
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				env, _ := cmd.Flags().GetString("env")
+				if err := v.Set(ctx, name, env, value, metadataMap); err != nil {
+					printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
+					return err
+				}
+
+				printSuccess(fmt.Sprintf("Secret %q stored.", name))
+				if generatePw {
+					fmt.Printf("  %s  %s\n", colorize("Generated:", ansiDim), colorize(value, ansiGreen))
+				}
+				return nil
+			})
 		},
 	}
 
 	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "Secret value (reads from stdin if omitted)")
-	cmd.Flags().StringSliceVarP(&labels, "label", "l", nil, "Labels as key=value (repeatable)")
+	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "Metadata as key=value (repeatable)")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	cmd.Flags().BoolVarP(&generatePw, "generate", "g", false, "Auto-generate a random password as the value")
 	cmd.Flags().IntVar(&genLength, "length", 32, "Generated password length (with --generate)")
 	cmd.Flags().BoolVar(&genSymbols, "symbols", true, "Include symbols in generated password (with --generate)")
@@ -265,61 +310,62 @@ func newGetCmd() *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				printError(err.Error(), "Run 'maestro init' to create a new vault.")
-				return err
-			}
-			defer v.Close()
-
-			entry, err := v.Get(args[0])
-			if err != nil {
-				printError(err.Error(), "Use 'maestro list' to see available secrets.")
-				return err
-			}
-
-			// Copy to clipboard if requested.
-			if clip {
-				cancel, err := clipboard.CopyWithClear(entry.Value, 45*time.Second)
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				env, _ := cmd.Flags().GetString("env")
+				entry, err := v.Get(ctx, args[0], env)
 				if err != nil {
-					return fmt.Errorf("clipboard: %w", err)
+					printError(err.Error(), "Use 'maestrovault list' to see available secrets.")
+					return err
 				}
-				_ = cancel
-				printSuccess(fmt.Sprintf("Copied %q to clipboard. Auto-clears in 45s.", entry.Name))
+
+				// Copy to clipboard if requested.
+				if clip {
+					cancel, err := clipboard.CopyWithClear(entry.Value, 45*time.Second)
+					if err != nil {
+						return fmt.Errorf("clipboard: %w", err)
+					}
+					_ = cancel
+					printSuccess(fmt.Sprintf("Copied %q to clipboard. Auto-clears in 45s.", entry.Name))
+					return nil
+				}
+
+				// Quiet mode: just print the value (for piping).
+				if quiet {
+					fmt.Print(entry.Value)
+					return nil
+				}
+
+				format := resolveFormat(outputFormat)
+				if format == "json" {
+					return outputJSON(entry)
+				}
+
+				outputKeyValue("Name", entry.Name)
+				if entry.Environment != "" {
+					outputKeyValue("Environment", entry.Environment)
+				}
+				outputKeyValue("Value", colorize(entry.Value, ansiGreen))
+				if len(entry.Metadata) > 0 {
+					outputKeyValue("Metadata", formatMetadata(entry.Metadata))
+				}
+				outputKeyValue("Created", entry.CreatedAt)
+				outputKeyValue("Updated", entry.UpdatedAt)
 				return nil
-			}
-
-			// Quiet mode: just print the value (for piping).
-			if quiet {
-				fmt.Print(entry.Value)
-				return nil
-			}
-
-			format := resolveFormat(outputFormat)
-			if format == "json" {
-				return outputJSON(entry)
-			}
-
-			outputKeyValue("Name", entry.Name)
-			outputKeyValue("Value", colorize(entry.Value, ansiGreen))
-			if len(entry.Labels) > 0 {
-				outputKeyValue("Labels", formatLabels(entry.Labels))
-			}
-			outputKeyValue("Created", entry.CreatedAt)
-			outputKeyValue("Updated", entry.UpdatedAt)
-			return nil
+			})
 		},
 	}
 
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Print only the value (for piping)")
 	cmd.Flags().BoolVarP(&clip, "clip", "c", false, "Copy value to clipboard (auto-clears in 45s)")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
 func newListCmd() *cobra.Command {
 	var (
-		filter string
-		label  string
+		filter        string
+		metadataKey   string
+		metadataValue string
 	)
 
 	cmd := &cobra.Command{
@@ -327,64 +373,59 @@ func newListCmd() *cobra.Command {
 		Short:   "List all secrets",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				printError(err.Error(), "Run 'maestro init' to create a new vault.")
-				return err
-			}
-			defer v.Close()
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				env, _ := cmd.Flags().GetString("env")
 
-			var entries []vault.SecretEntry
+				var entries []vault.SecretEntry
+				var err error
 
-			switch {
-			case filter != "":
-				entries, err = v.Search(filter)
-			case label != "":
-				parts := strings.SplitN(label, "=", 2)
-				key := parts[0]
-				val := ""
-				if len(parts) == 2 {
-					val = parts[1]
+				switch {
+				case filter != "":
+					entries, err = v.Search(ctx, filter)
+				case metadataKey != "":
+					entries, err = v.ListByMetadata(ctx, metadataKey, metadataValue)
+				default:
+					entries, err = v.List(ctx, env)
 				}
-				entries, err = v.ListByLabel(key, val)
-			default:
-				entries, err = v.List()
-			}
-			if err != nil {
-				return err
-			}
+				if err != nil {
+					return err
+				}
 
-			if len(entries) == 0 {
-				fmt.Println(colorize("No secrets stored.", ansiDim))
-				fmt.Printf("  %s maestro set <name> --value <value>\n", colorize("Hint:", ansiYellow))
+				if len(entries) == 0 {
+					fmt.Println(colorize("No secrets stored.", ansiDim))
+					fmt.Printf("  %s maestrovault set <name> --value <value>\n", colorize("Hint:", ansiYellow))
+					return nil
+				}
+
+				format := resolveFormat(outputFormat)
+				if format == "json" {
+					return outputJSON(entries)
+				}
+
+				headers := []string{"NAME", "ENVIRONMENT", "METADATA", "CREATED", "UPDATED"}
+				rows := make([][]string, len(entries))
+				for i, e := range entries {
+					rows[i] = []string{
+						colorize(e.Name, ansiBold),
+						e.Environment,
+						formatMetadata(e.Metadata),
+						colorize(e.CreatedAt, ansiDim),
+						colorize(e.UpdatedAt, ansiDim),
+					}
+				}
+				outputTable(headers, rows)
+
+				count := colorize(fmt.Sprintf("%d secret(s)", len(entries)), ansiDim)
+				fmt.Printf("\n%s\n", count)
 				return nil
-			}
-
-			format := resolveFormat(outputFormat)
-			if format == "json" {
-				return outputJSON(entries)
-			}
-
-			headers := []string{"NAME", "LABELS", "CREATED", "UPDATED"}
-			rows := make([][]string, len(entries))
-			for i, e := range entries {
-				rows[i] = []string{
-					colorize(e.Name, ansiBold),
-					formatLabels(e.Labels),
-					colorize(e.CreatedAt, ansiDim),
-					colorize(e.UpdatedAt, ansiDim),
-				}
-			}
-			outputTable(headers, rows)
-
-			count := colorize(fmt.Sprintf("%d secret(s)", len(entries)), ansiDim)
-			fmt.Printf("\n%s\n", count)
-			return nil
+			})
 		},
 	}
 
-	cmd.Flags().StringVarP(&filter, "filter", "f", "", "Filter secrets by name or label content")
-	cmd.Flags().StringVar(&label, "label", "", "Filter by label (key or key=value)")
+	cmd.Flags().StringVarP(&filter, "filter", "f", "", "Filter secrets by name or metadata content")
+	cmd.Flags().StringVar(&metadataKey, "metadata-key", "", "Filter by metadata key")
+	cmd.Flags().StringVar(&metadataValue, "metadata-value", "", "Filter by metadata value (used with --metadata-key)")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
@@ -412,64 +453,71 @@ func newDeleteCmd() *cobra.Command {
 				}
 			}
 
-			v, err := vault.Open()
-			if err != nil {
-				return err
-			}
-			defer v.Close()
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				env, _ := cmd.Flags().GetString("env")
+				if err := v.Delete(ctx, name, env); err != nil {
+					printError(err.Error(), "Use 'maestrovault list' to see available secrets.")
+					return err
+				}
 
-			if err := v.Delete(name); err != nil {
-				printError(err.Error(), "Use 'maestro list' to see available secrets.")
-				return err
-			}
-
-			printSuccess(fmt.Sprintf("Secret %q deleted.", name))
-			return nil
+				printSuccess(fmt.Sprintf("Secret %q deleted.", name))
+				return nil
+			})
 		},
 	}
 
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation prompt")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
 func newEditCmd() *cobra.Command {
 	var (
 		valueFlag string
-		labels    []string
+		metadata  []string
 	)
 
 	cmd := &cobra.Command{
 		Use:               "edit <name>",
 		Short:             "Edit an existing secret",
-		Long:              "Update the value and/or labels of an existing secret. Unspecified fields are preserved.",
+		Long:              "Update the value and/or metadata of an existing secret. Unspecified fields are preserved.",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			v, err := vault.Open()
-			if err != nil {
-				return err
-			}
-			defer v.Close()
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				env, _ := cmd.Flags().GetString("env")
 
-			var newLabels map[string]string
-			if len(labels) > 0 {
-				newLabels = parseLabels(labels)
-			}
+				var newValue *string
+				if cmd.Flags().Changed("value") {
+					val, _ := cmd.Flags().GetString("value")
+					newValue = &val
+				}
 
-			if err := v.Edit(name, valueFlag, newLabels); err != nil {
-				printError(err.Error(), "Use 'maestro list' to see available secrets.")
-				return err
-			}
+				var newMetadata map[string]any
+				if len(metadata) > 0 {
+					var err error
+					newMetadata, err = parseMetadata(metadata)
+					if err != nil {
+						return err
+					}
+				}
 
-			printSuccess(fmt.Sprintf("Secret %q updated.", name))
-			return nil
+				if err := v.Edit(ctx, name, env, newValue, newMetadata); err != nil {
+					printError(err.Error(), "Use 'maestrovault list' to see available secrets.")
+					return err
+				}
+
+				printSuccess(fmt.Sprintf("Secret %q updated.", name))
+				return nil
+			})
 		},
 	}
 
 	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "New secret value (keeps existing if omitted)")
-	cmd.Flags().StringSliceVarP(&labels, "label", "l", nil, "New labels as key=value (replaces all labels)")
+	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "New metadata as key=value (replaces all metadata)")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
@@ -483,81 +531,79 @@ func newCopyCmd() *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: secretNameCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				return err
-			}
-			defer v.Close()
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				env, _ := cmd.Flags().GetString("env")
+				entry, err := v.Get(ctx, args[0], env)
+				if err != nil {
+					printError(err.Error(), "Use 'maestrovault list' to see available secrets.")
+					return err
+				}
 
-			entry, err := v.Get(args[0])
-			if err != nil {
-				printError(err.Error(), "Use 'maestro list' to see available secrets.")
-				return err
-			}
+				dur := time.Duration(clearAfter) * time.Second
+				_, err = clipboard.CopyWithClear(entry.Value, dur)
+				if err != nil {
+					return fmt.Errorf("clipboard: %w", err)
+				}
 
-			dur := time.Duration(clearAfter) * time.Second
-			_, err = clipboard.CopyWithClear(entry.Value, dur)
-			if err != nil {
-				return fmt.Errorf("clipboard: %w", err)
-			}
-
-			if clearAfter > 0 {
-				printSuccess(fmt.Sprintf("Copied %q to clipboard. Auto-clears in %ds.", entry.Name, clearAfter))
-			} else {
-				printSuccess(fmt.Sprintf("Copied %q to clipboard.", entry.Name))
-			}
-			return nil
+				if clearAfter > 0 {
+					printSuccess(fmt.Sprintf("Copied %q to clipboard. Auto-clears in %ds.", entry.Name, clearAfter))
+				} else {
+					printSuccess(fmt.Sprintf("Copied %q to clipboard.", entry.Name))
+				}
+				return nil
+			})
 		},
 	}
 
 	cmd.Flags().IntVar(&clearAfter, "clear", 45, "Seconds before clipboard is auto-cleared (0 to disable)")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
 func newSearchCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search secrets by name or labels",
+		Short: "Search secrets by name or metadata",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				return err
-			}
-			defer v.Close()
-
-			entries, err := v.Search(args[0])
-			if err != nil {
-				return err
-			}
-
-			if len(entries) == 0 {
-				fmt.Printf("No secrets matching %q.\n", args[0])
-				return nil
-			}
-
-			format := resolveFormat(outputFormat)
-			if format == "json" {
-				return outputJSON(entries)
-			}
-
-			headers := []string{"NAME", "LABELS", "CREATED", "UPDATED"}
-			rows := make([][]string, len(entries))
-			for i, e := range entries {
-				rows[i] = []string{
-					colorize(e.Name, ansiBold),
-					formatLabels(e.Labels),
-					colorize(e.CreatedAt, ansiDim),
-					colorize(e.UpdatedAt, ansiDim),
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				entries, err := v.Search(ctx, args[0])
+				if err != nil {
+					return err
 				}
-			}
-			outputTable(headers, rows)
 
-			count := colorize(fmt.Sprintf("%d result(s)", len(entries)), ansiDim)
-			fmt.Printf("\n%s\n", count)
-			return nil
+				if len(entries) == 0 {
+					fmt.Printf("No secrets matching %q.\n", args[0])
+					return nil
+				}
+
+				format := resolveFormat(outputFormat)
+				if format == "json" {
+					return outputJSON(entries)
+				}
+
+				headers := []string{"NAME", "ENVIRONMENT", "METADATA", "CREATED", "UPDATED"}
+				rows := make([][]string, len(entries))
+				for i, e := range entries {
+					rows[i] = []string{
+						colorize(e.Name, ansiBold),
+						e.Environment,
+						formatMetadata(e.Metadata),
+						colorize(e.CreatedAt, ansiDim),
+						colorize(e.UpdatedAt, ansiDim),
+					}
+				}
+				outputTable(headers, rows)
+
+				count := colorize(fmt.Sprintf("%d result(s)", len(entries)), ansiDim)
+				fmt.Printf("\n%s\n", count)
+				return nil
+			})
 		},
 	}
+
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
+	return cmd
 }
 
 func newGenerateCmd() *cobra.Command {
@@ -568,7 +614,7 @@ func newGenerateCmd() *cobra.Command {
 		digits     bool
 		symbols    bool
 		name       string
-		labels     []string
+		metadata   []string
 		clip       bool
 		passphrase bool
 		words      int
@@ -606,17 +652,21 @@ Optionally store it directly as a secret with --name.`,
 
 			// Store if name provided.
 			if name != "" {
-				v, err := vault.Open()
-				if err != nil {
-					return err
+				storeErr := withVault(func(ctx context.Context, v vault.Vault) error {
+					env, _ := cmd.Flags().GetString("env")
+					metadataMap, err := parseMetadata(metadata)
+					if err != nil {
+						return err
+					}
+					if err := v.Set(ctx, name, env, result, metadataMap); err != nil {
+						return err
+					}
+					printSuccess(fmt.Sprintf("Generated and stored as %q.", name))
+					return nil
+				})
+				if storeErr != nil {
+					return storeErr
 				}
-				defer v.Close()
-
-				labelMap := parseLabels(labels)
-				if err := v.Set(name, result, labelMap); err != nil {
-					return err
-				}
-				printSuccess(fmt.Sprintf("Generated and stored as %q.", name))
 			}
 
 			// Copy to clipboard if requested.
@@ -642,11 +692,12 @@ Optionally store it directly as a secret with --name.`,
 	cmd.Flags().BoolVar(&digits, "digits", true, "Include digits")
 	cmd.Flags().BoolVar(&symbols, "symbols", true, "Include symbols")
 	cmd.Flags().StringVar(&name, "name", "", "Store the generated password as a secret with this name")
-	cmd.Flags().StringSliceVarP(&labels, "label", "l", nil, "Labels for stored secret (with --name)")
+	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "Metadata for stored secret (with --name)")
 	cmd.Flags().BoolVarP(&clip, "clip", "c", false, "Copy to clipboard")
 	cmd.Flags().BoolVar(&passphrase, "passphrase", false, "Generate a passphrase instead of a password")
 	cmd.Flags().IntVar(&words, "words", 5, "Number of words in passphrase (with --passphrase)")
 	cmd.Flags().StringVar(&delimiter, "delimiter", "-", "Word delimiter for passphrase (with --passphrase)")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 
 	return cmd
 }
@@ -663,30 +714,26 @@ func newEnvCmd() *cobra.Command {
 		Long: `Outputs secrets as export statements for shell evaluation.
 
 Usage:
-  eval $(maestro env)
-  eval $(maestro env --prefix APP_)`,
+  eval $(maestrovault env)
+  eval $(maestrovault env --prefix APP_)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				return err
-			}
-			defer v.Close()
-
-			entries, err := v.Export()
-			if err != nil {
-				return err
-			}
-
-			for _, e := range entries {
-				if filter != "" && !strings.Contains(strings.ToLower(e.Name), strings.ToLower(filter)) {
-					continue
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				entries, err := v.Export(ctx)
+				if err != nil {
+					return err
 				}
-				envName := prefix + toEnvName(e.Name)
-				// Shell-escape the value by wrapping in single quotes and escaping internal single quotes.
-				escaped := strings.ReplaceAll(e.Value, "'", "'\"'\"'")
-				fmt.Printf("export %s='%s'\n", envName, escaped)
-			}
-			return nil
+
+				for _, e := range entries {
+					if filter != "" && !strings.Contains(strings.ToLower(e.Name), strings.ToLower(filter)) {
+						continue
+					}
+					envName := prefix + toEnvName(e.Name)
+					// Shell-escape the value by wrapping in single quotes and escaping internal single quotes.
+					escaped := strings.ReplaceAll(e.Value, "'", "'\"'\"'")
+					fmt.Printf("export %s='%s'\n", envName, escaped)
+				}
+				return nil
+			})
 		},
 	}
 
@@ -707,37 +754,33 @@ func newExecCmd() *cobra.Command {
 		Long: `Executes a command with all vault secrets available as environment variables.
 
 Example:
-  maestro exec -- env
-  maestro exec --prefix DB_ -- psql`,
+  maestrovault exec -- env
+  maestrovault exec --prefix DB_ -- psql`,
 		DisableFlagParsing: false,
 		Args:               cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				return err
-			}
-			defer v.Close()
-
-			entries, err := v.Export()
-			if err != nil {
-				return err
-			}
-
-			env := os.Environ()
-			for _, e := range entries {
-				if filter != "" && !strings.Contains(strings.ToLower(e.Name), strings.ToLower(filter)) {
-					continue
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				entries, err := v.Export(ctx)
+				if err != nil {
+					return err
 				}
-				envName := prefix + toEnvName(e.Name)
-				env = append(env, fmt.Sprintf("%s=%s", envName, e.Value))
-			}
 
-			binary, err := exec.LookPath(args[0])
-			if err != nil {
-				return fmt.Errorf("command not found: %s", args[0])
-			}
+				environ := os.Environ()
+				for _, e := range entries {
+					if filter != "" && !strings.Contains(strings.ToLower(e.Name), strings.ToLower(filter)) {
+						continue
+					}
+					envName := prefix + toEnvName(e.Name)
+					environ = append(environ, fmt.Sprintf("%s=%s", envName, e.Value))
+				}
 
-			return syscall.Exec(binary, args, env)
+				binary, err := exec.LookPath(args[0])
+				if err != nil {
+					return fmt.Errorf("command not found: %s", args[0])
+				}
+
+				return syscall.Exec(binary, args, environ)
+			})
 		},
 	}
 
@@ -755,41 +798,38 @@ func newExportCmd() *cobra.Command {
 		Long: `Export all secrets to stdout in JSON or .env format.
 
 Examples:
-  maestro export > backup.json
-  maestro export --format env > .env`,
+  maestrovault export > backup.json
+  maestrovault export --format env > .env`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				return err
-			}
-			defer v.Close()
-
-			entries, err := v.Export()
-			if err != nil {
-				return err
-			}
-
-			switch strings.ToLower(format) {
-			case "env", "dotenv":
-				for _, e := range entries {
-					// .env format: KEY=VALUE (unquoted for simple values, quoted for complex)
-					escaped := strings.ReplaceAll(e.Value, "\"", "\\\"")
-					fmt.Printf("%s=\"%s\"\n", toEnvName(e.Name), escaped)
-				}
-			default:
-				data, err := json.MarshalIndent(entries, "", "  ")
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				entries, err := v.Export(ctx)
 				if err != nil {
 					return err
 				}
-				fmt.Println(string(data))
-			}
 
-			printWarning(fmt.Sprintf("Exported %d secret(s) in PLAINTEXT. Handle with care.", len(entries)))
-			return nil
+				switch strings.ToLower(format) {
+				case "env", "dotenv":
+					for _, e := range entries {
+						// .env format: KEY=VALUE (unquoted for simple values, quoted for complex)
+						escaped := strings.ReplaceAll(e.Value, "\"", "\\\"")
+						fmt.Printf("%s=\"%s\"\n", toEnvName(e.Name), escaped)
+					}
+				default:
+					data, err := json.MarshalIndent(entries, "", "  ")
+					if err != nil {
+						return err
+					}
+					fmt.Println(string(data))
+				}
+
+				printWarning(fmt.Sprintf("Exported %d secret(s) in PLAINTEXT. Handle with care.", len(entries)))
+				return nil
+			})
 		},
 	}
 
 	cmd.Flags().StringVar(&format, "format", "json", "Export format: json, env")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
@@ -805,8 +845,8 @@ func newImportCmd() *cobra.Command {
 		Long: `Import secrets from a JSON or .env file.
 
 Examples:
-  maestro import backup.json
-  maestro import --format env .env`,
+  maestrovault import backup.json
+  maestrovault import --format env .env`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
@@ -816,33 +856,13 @@ Examples:
 				return err
 			}
 
-			v, err := vault.Open()
-			if err != nil {
-				return err
-			}
-			defer v.Close()
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				var imported int
 
-			var imported int
-
-			switch strings.ToLower(format) {
-			case "env", "dotenv":
-				entries := parseEnvFile(string(data))
-				if !force && len(entries) > 0 {
-					fmt.Fprintf(os.Stderr, "Import %d secret(s) from %s? [y/N]: ", len(entries), filePath)
-					scanner := bufio.NewScanner(os.Stdin)
-					if scanner.Scan() {
-						answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
-						if answer != "y" && answer != "yes" {
-							fmt.Println("Aborted.")
-							return nil
-						}
-					}
-				}
-				imported, err = v.Import(entries)
-			default:
-				if !force {
-					var entries []vault.ExportEntry
-					if jsonErr := json.Unmarshal(data, &entries); jsonErr == nil {
+				switch strings.ToLower(format) {
+				case "env", "dotenv":
+					entries := parseEnvFile(string(data))
+					if !force && len(entries) > 0 {
 						fmt.Fprintf(os.Stderr, "Import %d secret(s) from %s? [y/N]: ", len(entries), filePath)
 						scanner := bufio.NewScanner(os.Stdin)
 						if scanner.Scan() {
@@ -853,21 +873,42 @@ Examples:
 							}
 						}
 					}
+					var err error
+					imported, err = v.Import(ctx, entries)
+					if err != nil {
+						return err
+					}
+				default:
+					if !force {
+						var entries []vault.ExportEntry
+						if jsonErr := json.Unmarshal(data, &entries); jsonErr == nil {
+							fmt.Fprintf(os.Stderr, "Import %d secret(s) from %s? [y/N]: ", len(entries), filePath)
+							scanner := bufio.NewScanner(os.Stdin)
+							if scanner.Scan() {
+								answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+								if answer != "y" && answer != "yes" {
+									fmt.Println("Aborted.")
+									return nil
+								}
+							}
+						}
+					}
+					var err error
+					imported, err = v.ImportJSON(ctx, data)
+					if err != nil {
+						return err
+					}
 				}
-				imported, err = v.ImportJSON(data)
-			}
 
-			if err != nil {
-				return err
-			}
-
-			printSuccess(fmt.Sprintf("Imported %d secret(s).", imported))
-			return nil
+				printSuccess(fmt.Sprintf("Imported %d secret(s).", imported))
+				return nil
+			})
 		},
 	}
 
 	cmd.Flags().StringVar(&format, "format", "json", "Import format: json, env")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Skip confirmation prompt")
+	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
 	return cmd
 }
 
@@ -916,19 +957,14 @@ func newTUICmd() *cobra.Command {
 Colors automatically adapt to your terminal theme.
 Use --vim for Normal/Visual/Insert modes with full vim motions.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				printError(err.Error(), "Run 'maestro init' to create a new vault.")
-				return err
-			}
-			defer v.Close()
-
-			opts := tui.Opts{VimMode: vimMode}
-			p := tea.NewProgram(tui.New(v, opts), tea.WithAltScreen())
-			if _, err := p.Run(); err != nil {
-				return fmt.Errorf("TUI error: %w", err)
-			}
-			return nil
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				opts := tui.Opts{VimMode: vimMode}
+				p := tea.NewProgram(tui.New(v, opts), tea.WithAltScreen())
+				if _, err := p.Run(); err != nil {
+					return fmt.Errorf("TUI error: %w", err)
+				}
+				return nil
+			})
 		},
 	}
 
@@ -956,7 +992,21 @@ Use 'maestrovault token create' to generate API tokens before starting.`,
 		Example: `  maestrovault serve
   maestrovault serve --socket /tmp/maestrovault.sock`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
+			ctx := context.Background()
+
+			// Load config and check TouchID.
+			cfg, err := vault.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+			if cfg.TouchID {
+				auth := touchid.New()
+				if err := auth.Authenticate("MaestroVault API server"); err != nil {
+					return fmt.Errorf("authentication required: %w", err)
+				}
+			}
+
+			v, err := vault.Open(ctx)
 			if err != nil {
 				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
 				return err
@@ -1002,7 +1052,7 @@ Tokens use scoped permissions:
   generate  — generate passwords
   admin     — token management (implicitly grants all other scopes)
 
-Tokens are stored as SHA-256 hashes. The plaintext token is shown only once
+Tokens are stored as HMAC-SHA256 hashes. The plaintext token is shown only once
 at creation time — save it somewhere safe.`,
 	}
 
@@ -1049,66 +1099,61 @@ func newTokenCreateCmd() *cobra.Command {
 				}
 			}
 
-			v, err := vault.Open()
-			if err != nil {
-				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
-				return err
-			}
-			defer v.Close()
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				ts := api.NewTokenStore(v.DB())
 
-			ts := api.NewTokenStore(v.DB())
+				var expiresAt *time.Time
+				if expires != "" && expires != "0" {
+					d, err := time.ParseDuration(expires)
+					if err != nil {
+						return fmt.Errorf("invalid --expires duration: %w", err)
+					}
+					t := time.Now().Add(d)
+					expiresAt = &t
+				}
 
-			var expiresAt *time.Time
-			if expires != "" && expires != "0" {
-				d, err := time.ParseDuration(expires)
+				plaintext, tok, err := ts.Create(name, parsedScopes, expiresAt)
 				if err != nil {
-					return fmt.Errorf("invalid --expires duration: %w", err)
+					printError(err.Error(), "")
+					return err
 				}
-				t := time.Now().Add(d)
-				expiresAt = &t
-			}
 
-			plaintext, tok, err := ts.Create(name, parsedScopes, expiresAt)
-			if err != nil {
-				printError(err.Error(), "")
-				return err
-			}
-
-			if resolveFormat(outputFormat) == "json" {
-				out := map[string]interface{}{
-					"token":      plaintext,
-					"id":         tok.ID,
-					"name":       tok.Name,
-					"scopes":     tok.Scopes,
-					"created_at": tok.CreatedAt,
+				if resolveFormat(outputFormat) == "json" {
+					out := map[string]interface{}{
+						"token":      plaintext,
+						"id":         tok.ID,
+						"name":       tok.Name,
+						"scopes":     tok.Scopes,
+						"created_at": tok.CreatedAt,
+					}
+					if tok.ExpiresAt != nil {
+						out["expires_at"] = tok.ExpiresAt
+					}
+					enc := json.NewEncoder(os.Stdout)
+					enc.SetIndent("", "  ")
+					return enc.Encode(out)
 				}
+
+				printSuccess("Token created successfully")
+				fmt.Println()
+				fmt.Printf("  %s  %s\n", colorize("Token:", ansiBold), plaintext)
+				fmt.Printf("  %s     %s\n", colorize("ID:", ansiBold), tok.ID)
+				fmt.Printf("  %s   %s\n", colorize("Name:", ansiBold), tok.Name)
+				scopeStrs := make([]string, len(tok.Scopes))
+				for i, s := range tok.Scopes {
+					scopeStrs[i] = string(s)
+				}
+				fmt.Printf("  %s %s\n", colorize("Scopes:", ansiBold), strings.Join(scopeStrs, ", "))
 				if tok.ExpiresAt != nil {
-					out["expires_at"] = tok.ExpiresAt
+					fmt.Printf("  %s %s\n", colorize("Expires:", ansiBold), tok.ExpiresAt.Format(time.RFC3339))
+				} else {
+					fmt.Printf("  %s %s\n", colorize("Expires:", ansiBold), "never")
 				}
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(out)
-			}
+				fmt.Println()
+				printWarning("Save this token now — it cannot be retrieved again.")
 
-			printSuccess("Token created successfully")
-			fmt.Println()
-			fmt.Printf("  %s  %s\n", colorize("Token:", ansiBold), plaintext)
-			fmt.Printf("  %s     %s\n", colorize("ID:", ansiBold), tok.ID)
-			fmt.Printf("  %s   %s\n", colorize("Name:", ansiBold), tok.Name)
-			scopeStrs := make([]string, len(tok.Scopes))
-			for i, s := range tok.Scopes {
-				scopeStrs[i] = string(s)
-			}
-			fmt.Printf("  %s %s\n", colorize("Scopes:", ansiBold), strings.Join(scopeStrs, ", "))
-			if tok.ExpiresAt != nil {
-				fmt.Printf("  %s %s\n", colorize("Expires:", ansiBold), tok.ExpiresAt.Format(time.RFC3339))
-			} else {
-				fmt.Printf("  %s %s\n", colorize("Expires:", ansiBold), "never")
-			}
-			fmt.Println()
-			printWarning("Save this token now — it cannot be retrieved again.")
-
-			return nil
+				return nil
+			})
 		},
 	}
 
@@ -1127,63 +1172,58 @@ func newTokenListCmd() *cobra.Command {
 		Short:   "List all API tokens",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			v, err := vault.Open()
-			if err != nil {
-				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
-				return err
-			}
-			defer v.Close()
-
-			ts := api.NewTokenStore(v.DB())
-			tokens, err := ts.List()
-			if err != nil {
-				printError(err.Error(), "")
-				return err
-			}
-
-			if len(tokens) == 0 {
-				fmt.Printf("  %s\n", colorize("No API tokens found. Create one with 'maestrovault token create'.", ansiDim))
-				return nil
-			}
-
-			if resolveFormat(outputFormat) == "json" {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(tokens)
-			}
-
-			// Table output.
-			fmt.Printf("  %-18s %-20s %-30s %-22s %s\n",
-				colorize("ID", ansiBold),
-				colorize("NAME", ansiBold),
-				colorize("SCOPES", ansiBold),
-				colorize("CREATED", ansiBold),
-				colorize("EXPIRES", ansiBold),
-			)
-			for _, tok := range tokens {
-				scopeStrs := make([]string, len(tok.Scopes))
-				for i, s := range tok.Scopes {
-					scopeStrs[i] = string(s)
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				ts := api.NewTokenStore(v.DB())
+				tokens, err := ts.List()
+				if err != nil {
+					printError(err.Error(), "")
+					return err
 				}
-				expires := "-"
-				if tok.ExpiresAt != nil {
-					if time.Now().After(*tok.ExpiresAt) {
-						expires = colorize("expired", ansiRed)
-					} else {
-						expires = tok.ExpiresAt.Format("2006-01-02 15:04")
-					}
+
+				if len(tokens) == 0 {
+					fmt.Printf("  %s\n", colorize("No API tokens found. Create one with 'maestrovault token create'.", ansiDim))
+					return nil
 				}
+
+				if resolveFormat(outputFormat) == "json" {
+					enc := json.NewEncoder(os.Stdout)
+					enc.SetIndent("", "  ")
+					return enc.Encode(tokens)
+				}
+
+				// Table output.
 				fmt.Printf("  %-18s %-20s %-30s %-22s %s\n",
-					tok.ID,
-					tok.Name,
-					strings.Join(scopeStrs, ", "),
-					tok.CreatedAt.Format("2006-01-02 15:04"),
-					expires,
+					colorize("ID", ansiBold),
+					colorize("NAME", ansiBold),
+					colorize("SCOPES", ansiBold),
+					colorize("CREATED", ansiBold),
+					colorize("EXPIRES", ansiBold),
 				)
-			}
-			fmt.Printf("\n  %s\n", colorize(fmt.Sprintf("%d token(s)", len(tokens)), ansiDim))
+				for _, tok := range tokens {
+					scopeStrs := make([]string, len(tok.Scopes))
+					for i, s := range tok.Scopes {
+						scopeStrs[i] = string(s)
+					}
+					expires := "-"
+					if tok.ExpiresAt != nil {
+						if time.Now().After(*tok.ExpiresAt) {
+							expires = colorize("expired", ansiRed)
+						} else {
+							expires = tok.ExpiresAt.Format("2006-01-02 15:04")
+						}
+					}
+					fmt.Printf("  %-18s %-20s %-30s %-22s %s\n",
+						tok.ID,
+						tok.Name,
+						strings.Join(scopeStrs, ", "),
+						tok.CreatedAt.Format("2006-01-02 15:04"),
+						expires,
+					)
+				}
+				fmt.Printf("\n  %s\n", colorize(fmt.Sprintf("%d token(s)", len(tokens)), ansiDim))
 
-			return nil
+				return nil
+			})
 		},
 	}
 }
@@ -1205,32 +1245,27 @@ The token is permanently deleted and can no longer be used to authenticate.`,
 				return fmt.Errorf("provide a token ID or use --all")
 			}
 
-			v, err := vault.Open()
-			if err != nil {
-				printError(err.Error(), "Run 'maestrovault init' to create a new vault.")
-				return err
-			}
-			defer v.Close()
+			return withVault(func(ctx context.Context, v vault.Vault) error {
+				ts := api.NewTokenStore(v.DB())
 
-			ts := api.NewTokenStore(v.DB())
+				if all {
+					n, err := ts.RevokeAll()
+					if err != nil {
+						printError(err.Error(), "")
+						return err
+					}
+					printSuccess(fmt.Sprintf("Revoked %d token(s)", n))
+					return nil
+				}
 
-			if all {
-				n, err := ts.RevokeAll()
-				if err != nil {
+				id := args[0]
+				if err := ts.Revoke(id); err != nil {
 					printError(err.Error(), "")
 					return err
 				}
-				printSuccess(fmt.Sprintf("Revoked %d token(s)", n))
+				printSuccess(fmt.Sprintf("Token %s revoked", id))
 				return nil
-			}
-
-			id := args[0]
-			if err := ts.Revoke(id); err != nil {
-				printError(err.Error(), "")
-				return err
-			}
-			printSuccess(fmt.Sprintf("Token %s revoked", id))
-			return nil
+			})
 		},
 	}
 
@@ -1400,26 +1435,35 @@ func newTouchIDStatusCmd() *cobra.Command {
 
 // --- Helpers ---
 
-// parseLabels converts "key=value" strings into a map.
-func parseLabels(labels []string) map[string]string {
-	result := make(map[string]string)
-	for _, l := range labels {
-		parts := strings.SplitN(l, "=", 2)
-		if len(parts) == 2 {
-			result[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-		}
+// parseMetadata converts "key=value" strings into a map.
+func parseMetadata(pairs []string) (map[string]any, error) {
+	if len(pairs) == 0 {
+		return nil, nil
 	}
-	return result
+	m := make(map[string]any)
+	for _, pair := range pairs {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid metadata format %q (expected key=value)", pair)
+		}
+		m[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	}
+	return m, nil
 }
 
-// formatLabels renders a label map as a comma-separated string.
-func formatLabels(labels map[string]string) string {
-	if len(labels) == 0 {
+// formatMetadata renders a metadata map as a sorted comma-separated string.
+func formatMetadata(m map[string]any) string {
+	if len(m) == 0 {
 		return colorize("-", ansiDim)
 	}
-	parts := make([]string, 0, len(labels))
-	for k, v := range labels {
-		parts = append(parts, colorize(k, ansiMagenta)+"="+v)
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(m))
+	for _, k := range keys {
+		parts = append(parts, colorize(k, ansiMagenta)+"="+fmt.Sprintf("%v", m[k]))
 	}
 	return strings.Join(parts, ", ")
 }

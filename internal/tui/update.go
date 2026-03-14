@@ -32,7 +32,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenDetail {
 			// Refresh the detail view with decrypted value.
 			for i, s := range m.display {
-				if s.Name == msg.entry.Name {
+				if s.Name == msg.entry.Name && s.Environment == msg.entry.Environment {
 					m.display[i] = *msg.entry
 					break
 				}
@@ -82,9 +82,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 		return m, cmd
 	}
+	if m.screen == screenSetEnv {
+		var cmd tea.Cmd
+		m.envInput, cmd = m.envInput.Update(msg)
+		return m, cmd
+	}
 	if m.screen == screenSetValue {
 		var cmd tea.Cmd
 		m.valueInput, cmd = m.valueInput.Update(msg)
+		return m, cmd
+	}
+	if m.screen == screenSetMetadata {
+		var cmd tea.Cmd
+		m.metadataInput, cmd = m.metadataInput.Update(msg)
 		return m, cmd
 	}
 	if m.searchActive {
@@ -198,7 +208,8 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 		if s := m.currentSecret(); s != nil {
 			m.screen = screenDetail
 			m.valueMasked = true
-			return m, getSecret(m.vault, s.Name)
+			m.selectedEnv = s.Environment
+			return m, getSecret(m.vault, s.Name, s.Environment)
 		}
 
 	// Add (insert mode).
@@ -207,8 +218,11 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 		m.screen = screenSetName
 		m.editing = false
 		m.editName = ""
+		m.editEnv = ""
 		m.nameInput.SetValue("")
+		m.envInput.SetValue("")
 		m.valueInput.SetValue("")
+		m.metadataInput.SetValue("")
 		m.nameInput.Focus()
 		return m, textinput.Blink
 
@@ -219,8 +233,11 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 			m.screen = screenSetName
 			m.editing = true
 			m.editName = s.Name
+			m.editEnv = s.Environment
 			m.nameInput.SetValue(s.Name)
+			m.envInput.SetValue(s.Environment)
 			m.valueInput.SetValue("")
+			m.metadataInput.SetValue(formatMetadataPlain(s.Metadata))
 			m.nameInput.Focus()
 			return m, textinput.Blink
 		}
@@ -236,13 +253,14 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 		return m, nil
 	case "x":
 		if s := m.currentSecret(); s != nil {
+			m.selectedEnv = s.Environment
 			m.screen = screenConfirmDelete
 		}
 
 	// Copy.
 	case "c":
 		if s := m.currentSecret(); s != nil {
-			return m, copyToClipboard(m.vault, s.Name)
+			return m, copyToClipboard(m.vault, s.Name, s.Environment)
 		}
 
 	// Search.
@@ -307,6 +325,7 @@ func (m Model) handlePendingKey(key string) (tea.Model, tea.Cmd) {
 		if key == "d" {
 			// dd = delete current
 			if s := m.currentSecret(); s != nil {
+				m.selectedEnv = s.Environment
 				m.screen = screenConfirmDelete
 			}
 		}
@@ -324,7 +343,7 @@ func (m Model) handleNormalDetail(msg tea.KeyMsg, key string) (tea.Model, tea.Cm
 		m.valueMasked = !m.valueMasked
 	case "c":
 		if s := m.currentSecret(); s != nil {
-			return m, copyToClipboard(m.vault, s.Name)
+			return m, copyToClipboard(m.vault, s.Name, s.Environment)
 		}
 	case "e":
 		if s := m.currentSecret(); s != nil {
@@ -332,12 +351,18 @@ func (m Model) handleNormalDetail(msg tea.KeyMsg, key string) (tea.Model, tea.Cm
 			m.screen = screenSetName
 			m.editing = true
 			m.editName = s.Name
+			m.editEnv = s.Environment
 			m.nameInput.SetValue(s.Name)
+			m.envInput.SetValue(s.Environment)
 			m.valueInput.SetValue("")
+			m.metadataInput.SetValue(formatMetadataPlain(s.Metadata))
 			m.nameInput.Focus()
 			return m, textinput.Blink
 		}
 	case "d":
+		if s := m.currentSecret(); s != nil {
+			m.selectedEnv = s.Environment
+		}
 		m.screen = screenConfirmDelete
 	case "q":
 		m.quitting = true
@@ -364,8 +389,8 @@ func (m Model) handleVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "g":
 		m.pendingKey = "g"
 	case "d", "x":
-		names := m.selectedNames()
-		if len(names) > 0 {
+		refs := m.selectedRefs()
+		if len(refs) > 0 {
 			m.screen = screenConfirmDelete
 		}
 		m.mode = ModeNormal
@@ -391,9 +416,9 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.toastKind = "error"
 				return m, clearToastAfter(3 * time.Second)
 			}
-			m.screen = screenSetValue
+			m.screen = screenSetEnv
 			m.nameInput.Blur()
-			m.valueInput.Focus()
+			m.envInput.Focus()
 			return m, textinput.Blink
 		case "esc":
 			m.mode = ModeNormal
@@ -405,20 +430,36 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case screenSetEnv:
+		switch key {
+		case "enter":
+			m.screen = screenSetValue
+			m.envInput.Blur()
+			m.valueInput.Focus()
+			return m, textinput.Blink
+		case "esc":
+			m.mode = ModeNormal
+			m.screen = screenList
+			m.envInput.Blur()
+		default:
+			var cmd tea.Cmd
+			m.envInput, cmd = m.envInput.Update(msg)
+			return m, cmd
+		}
+
 	case screenSetValue:
 		switch key {
 		case "enter":
-			name := m.nameInput.Value()
 			value := m.valueInput.Value()
 			if value == "" {
 				m.toast = "Value cannot be empty"
 				m.toastKind = "error"
 				return m, clearToastAfter(3 * time.Second)
 			}
-			m.mode = ModeNormal
-			m.screen = screenList
+			m.screen = screenSetMetadata
 			m.valueInput.Blur()
-			return m, setSecret(m.vault, name, value, nil)
+			m.metadataInput.Focus()
+			return m, textinput.Blink
 		case "esc":
 			m.mode = ModeNormal
 			m.screen = screenList
@@ -426,6 +467,27 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			m.valueInput, cmd = m.valueInput.Update(msg)
+			return m, cmd
+		}
+
+	case screenSetMetadata:
+		switch key {
+		case "enter":
+			name := m.nameInput.Value()
+			env := m.envInput.Value()
+			value := m.valueInput.Value()
+			metadata := parseMetadataInput(m.metadataInput.Value())
+			m.mode = ModeNormal
+			m.screen = screenList
+			m.metadataInput.Blur()
+			return m, setSecret(m.vault, name, env, value, metadata)
+		case "esc":
+			m.mode = ModeNormal
+			m.screen = screenList
+			m.metadataInput.Blur()
+		default:
+			var cmd tea.Cmd
+			m.metadataInput, cmd = m.metadataInput.Update(msg)
 			return m, cmd
 		}
 	}
@@ -438,14 +500,14 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleConfirmDelete(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "y", "Y", "enter":
-		names := m.selectedNames()
+		refs := m.selectedRefs()
 		m.screen = screenList
 		m.mode = ModeNormal
-		if len(names) == 1 {
-			return m, deleteSecret(m.vault, names[0])
+		if len(refs) == 1 {
+			return m, deleteSecret(m.vault, refs[0].Name, refs[0].Environment)
 		}
-		if len(names) > 1 {
-			return m, deleteSecrets(m.vault, names)
+		if len(refs) > 1 {
+			return m, deleteSecrets(m.vault, refs)
 		}
 	case "n", "N", "esc", "q":
 		m.screen = screenList
@@ -558,7 +620,7 @@ func (m Model) handleGeneratorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if name != "" {
 			value := m.gen.preview
 			m.showGenerator = false
-			return m, setSecret(m.vault, name, value, nil)
+			return m, setSecret(m.vault, name, "", value, nil)
 		}
 		// No name: just close.
 		m.showGenerator = false
@@ -607,14 +669,18 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if s := m.currentSecret(); s != nil {
 				m.screen = screenDetail
 				m.valueMasked = true
-				return m, getSecret(m.vault, s.Name)
+				m.selectedEnv = s.Environment
+				return m, getSecret(m.vault, s.Name, s.Environment)
 			}
 		case "a":
 			m.screen = screenSetName
 			m.editing = false
 			m.editName = ""
+			m.editEnv = ""
 			m.nameInput.SetValue("")
+			m.envInput.SetValue("")
 			m.valueInput.SetValue("")
+			m.metadataInput.SetValue("")
 			m.nameInput.Focus()
 			return m, textinput.Blink
 		case "e":
@@ -622,18 +688,22 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.screen = screenSetName
 				m.editing = true
 				m.editName = s.Name
+				m.editEnv = s.Environment
 				m.nameInput.SetValue(s.Name)
+				m.envInput.SetValue(s.Environment)
 				m.valueInput.SetValue("")
+				m.metadataInput.SetValue(formatMetadataPlain(s.Metadata))
 				m.nameInput.Focus()
 				return m, textinput.Blink
 			}
 		case "d":
 			if s := m.currentSecret(); s != nil {
+				m.selectedEnv = s.Environment
 				m.screen = screenConfirmDelete
 			}
 		case "c":
 			if s := m.currentSecret(); s != nil {
-				return m, copyToClipboard(m.vault, s.Name)
+				return m, copyToClipboard(m.vault, s.Name, s.Environment)
 			}
 		case "/":
 			m.searchActive = true
@@ -666,19 +736,25 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.valueMasked = !m.valueMasked
 		case "c":
 			if s := m.currentSecret(); s != nil {
-				return m, copyToClipboard(m.vault, s.Name)
+				return m, copyToClipboard(m.vault, s.Name, s.Environment)
 			}
 		case "e":
 			if s := m.currentSecret(); s != nil {
 				m.screen = screenSetName
 				m.editing = true
 				m.editName = s.Name
+				m.editEnv = s.Environment
 				m.nameInput.SetValue(s.Name)
+				m.envInput.SetValue(s.Environment)
 				m.valueInput.SetValue("")
+				m.metadataInput.SetValue(formatMetadataPlain(s.Metadata))
 				m.nameInput.Focus()
 				return m, textinput.Blink
 			}
 		case "d":
+			if s := m.currentSecret(); s != nil {
+				m.selectedEnv = s.Environment
+			}
 			m.screen = screenConfirmDelete
 		case "q":
 			m.quitting = true
@@ -694,9 +770,9 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.toastKind = "error"
 				return m, clearToastAfter(3 * time.Second)
 			}
-			m.screen = screenSetValue
+			m.screen = screenSetEnv
 			m.nameInput.Blur()
-			m.valueInput.Focus()
+			m.envInput.Focus()
 			return m, textinput.Blink
 		case "esc":
 			m.screen = screenList
@@ -707,25 +783,60 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case screenSetEnv:
+		switch key {
+		case "enter":
+			m.screen = screenSetValue
+			m.envInput.Blur()
+			m.valueInput.Focus()
+			return m, textinput.Blink
+		case "esc":
+			m.screen = screenList
+			m.envInput.Blur()
+		default:
+			var cmd tea.Cmd
+			m.envInput, cmd = m.envInput.Update(msg)
+			return m, cmd
+		}
+
 	case screenSetValue:
 		switch key {
 		case "enter":
-			name := m.nameInput.Value()
 			value := m.valueInput.Value()
 			if value == "" {
 				m.toast = "Value cannot be empty"
 				m.toastKind = "error"
 				return m, clearToastAfter(3 * time.Second)
 			}
-			m.screen = screenList
+			m.screen = screenSetMetadata
 			m.valueInput.Blur()
-			return m, setSecret(m.vault, name, value, nil)
+			m.metadataInput.Focus()
+			return m, textinput.Blink
 		case "esc":
 			m.screen = screenList
 			m.valueInput.Blur()
 		default:
 			var cmd tea.Cmd
 			m.valueInput, cmd = m.valueInput.Update(msg)
+			return m, cmd
+		}
+
+	case screenSetMetadata:
+		switch key {
+		case "enter":
+			name := m.nameInput.Value()
+			env := m.envInput.Value()
+			value := m.valueInput.Value()
+			metadata := parseMetadataInput(m.metadataInput.Value())
+			m.screen = screenList
+			m.metadataInput.Blur()
+			return m, setSecret(m.vault, name, env, value, metadata)
+		case "esc":
+			m.screen = screenList
+			m.metadataInput.Blur()
+		default:
+			var cmd tea.Cmd
+			m.metadataInput, cmd = m.metadataInput.Update(msg)
 			return m, cmd
 		}
 

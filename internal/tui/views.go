@@ -31,7 +31,7 @@ func (m Model) View() string {
 		s = m.viewListScreen()
 	case screenDetail:
 		s = m.viewDetailScreen()
-	case screenSetName, screenSetValue:
+	case screenSetName, screenSetEnv, screenSetValue, screenSetMetadata:
 		s = m.viewSetScreen()
 	case screenConfirmDelete:
 		s = m.viewConfirmDeleteScreen()
@@ -78,9 +78,9 @@ func (m Model) viewListScreen() string {
 
 	// Column headers.
 	nameW := m.nameColWidth()
-	labelW := m.labelColWidth()
+	metaW := m.metadataColWidth()
 	colHeader := ColumnHeaderStyle.Render(
-		padRight("NAME", nameW) + "  " + padRight("LABELS", labelW) + "  " + "UPDATED",
+		padRight("NAME", nameW) + "  " + padRight("METADATA", metaW) + "  " + "UPDATED",
 	)
 	b.WriteString(colHeader)
 	b.WriteString("\n")
@@ -118,8 +118,21 @@ func (m Model) viewListScreen() string {
 				style = style.Foreground(ColorSecondary)
 			}
 
-			name := truncate(s.Name, nameW)
-			labels := truncate(formatLabelsPlain(s.Labels), labelW)
+			// Build name with environment badge.
+			nameStr := s.Name
+			envBadge := ""
+			if s.Environment != "" {
+				envBadge = " " + EnvBadgeStyle.Render("["+s.Environment+"]")
+			}
+			// Truncate the name portion, then append badge.
+			// We need to account for the badge width in truncation.
+			badgeLen := 0
+			if s.Environment != "" {
+				badgeLen = len(s.Environment) + 3 // " [" + env + "]"
+			}
+			nameDisplay := truncate(nameStr, nameW-badgeLen) + envBadge
+
+			meta := truncate(formatMetadataPlain(s.Metadata), metaW)
 			updated := ""
 			if s.UpdatedAt != "" {
 				// Show just the date portion.
@@ -130,8 +143,8 @@ func (m Model) viewListScreen() string {
 				}
 			}
 
-			row := cursor + style.Render(padRight(name, nameW)) +
-				"  " + MutedStyle.Render(padRight(labels, labelW)) +
+			row := cursor + style.Render(padRight(nameDisplay, nameW)) +
+				"  " + MutedStyle.Render(padRight(meta, metaW)) +
 				"  " + MutedStyle.Render(updated)
 			b.WriteString(row)
 			b.WriteString("\n")
@@ -180,9 +193,19 @@ func (m Model) viewDetailScreen() string {
 	}
 
 	b.WriteString(TitleStyle.Render("  " + s.Name))
+	if s.Environment != "" {
+		b.WriteString("  " + EnvBadgeStyle.Render("["+s.Environment+"]"))
+	}
 	b.WriteString("\n")
 	b.WriteString(dividerLine(w))
 	b.WriteString("\n\n")
+
+	// Environment.
+	if s.Environment != "" {
+		b.WriteString(MutedStyle.Render("  Environment: "))
+		b.WriteString(EnvBadgeStyle.Render(s.Environment))
+		b.WriteString("\n\n")
+	}
 
 	// Value.
 	b.WriteString(MutedStyle.Render("  Value: "))
@@ -193,10 +216,10 @@ func (m Model) viewDetailScreen() string {
 	}
 	b.WriteString("\n\n")
 
-	// Labels.
-	if len(s.Labels) > 0 {
-		b.WriteString(MutedStyle.Render("  Labels: "))
-		b.WriteString(formatLabelsInline(s.Labels))
+	// Metadata.
+	if len(s.Metadata) > 0 {
+		b.WriteString(MutedStyle.Render("  Metadata: "))
+		b.WriteString(formatMetadataInline(s.Metadata))
 		b.WriteString("\n\n")
 	}
 
@@ -249,20 +272,56 @@ func (m Model) viewSetScreen() string {
 	b.WriteString(dividerLine(w))
 	b.WriteString("\n\n")
 
+	// Step indicator.
+	steps := []struct {
+		label  string
+		screen screen
+	}{
+		{"1 Name", screenSetName},
+		{"2 Environment", screenSetEnv},
+		{"3 Value", screenSetValue},
+		{"4 Metadata", screenSetMetadata},
+	}
+	var stepParts []string
+	for _, step := range steps {
+		if m.screen == step.screen {
+			stepParts = append(stepParts, AccentStyle.Render(step.label))
+		} else {
+			stepParts = append(stepParts, MutedStyle.Render(step.label))
+		}
+	}
+	b.WriteString("  " + strings.Join(stepParts, MutedStyle.Render(" → ")) + "\n\n")
+
 	// Name field.
-	nameLabel := MutedStyle.Render("  Name:  ")
+	nameLabel := MutedStyle.Render("  Name:     ")
 	if m.screen == screenSetName {
-		nameLabel = AccentStyle.Render("▸ Name:  ")
+		nameLabel = AccentStyle.Render("▸ Name:     ")
 	}
 	b.WriteString(nameLabel + m.nameInput.View())
 	b.WriteString("\n\n")
 
+	// Environment field.
+	envLabel := MutedStyle.Render("  Env:      ")
+	if m.screen == screenSetEnv {
+		envLabel = AccentStyle.Render("▸ Env:      ")
+	}
+	b.WriteString(envLabel + m.envInput.View())
+	b.WriteString("\n\n")
+
 	// Value field.
-	valueLabel := MutedStyle.Render("  Value: ")
+	valueLabel := MutedStyle.Render("  Value:    ")
 	if m.screen == screenSetValue {
-		valueLabel = AccentStyle.Render("▸ Value: ")
+		valueLabel = AccentStyle.Render("▸ Value:    ")
 	}
 	b.WriteString(valueLabel + m.valueInput.View())
+	b.WriteString("\n\n")
+
+	// Metadata field.
+	metaLabel := MutedStyle.Render("  Metadata: ")
+	if m.screen == screenSetMetadata {
+		metaLabel = AccentStyle.Render("▸ Metadata: ")
+	}
+	b.WriteString(metaLabel + m.metadataInput.View())
 	b.WriteString("\n\n")
 
 	b.WriteString(dividerLine(w))
@@ -606,12 +665,12 @@ func (m Model) nameColWidth() int {
 	return col
 }
 
-func (m Model) labelColWidth() int {
+func (m Model) metadataColWidth() int {
 	w := m.width
 	if w <= 0 {
 		w = 80
 	}
-	// LABELS gets ~30% of space, min 10.
+	// METADATA gets ~30% of space, min 10.
 	col := w * 30 / 100
 	if col < 10 {
 		col = 10

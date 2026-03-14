@@ -9,6 +9,7 @@ MaestroVault stores secrets locally using AES-256-GCM envelope encryption with t
 ## Features
 
 - **CLI** — 20 commands with shell completions, JSON/table output, `NO_COLOR` support
+- **Environment scoping** — same secret name across dev, staging, prod
 - **TUI** — Terminal UI with search, sort, inline editing, password generator, and optional vim motions (`--vim`)
 - **REST API** — Unix domain socket server with scoped Bearer token authentication
 - **Go Client Library** — Programmatic access via `pkg/client`
@@ -37,14 +38,14 @@ go build -o maestrovault ./cmd/maestro
 # Initialize a new vault (creates ~/.maestrovault/)
 maestrovault init
 
-# Store a secret
-maestrovault set my-api-key "sk-abc123"
+# Store a secret (with optional environment and metadata)
+maestrovault set my-api-key --value "sk-abc123" --env prod --metadata service=api
 
 # Retrieve it
-maestrovault get my-api-key
+maestrovault get my-api-key --env prod
 
 # Copy to clipboard (auto-clears after 45s)
-maestrovault copy my-api-key
+maestrovault copy my-api-key --env prod
 
 # Launch the TUI
 maestrovault tui
@@ -102,7 +103,7 @@ curl --unix-socket ~/.maestrovault/api.sock \
 - **Envelope encryption** — Each secret encrypted with a unique DEK, DEKs encrypted with the master KEK
 - **Master key** — Stored in macOS Keychain, never touches disk
 - **TouchID** — Optional biometric gate before vault access
-- **API tokens** — SHA-256 hashed at rest, scoped (`read`, `write`, `generate`, `admin`)
+- **API tokens** — HMAC-SHA256 hashed at rest, scoped (`read`, `write`, `generate`, `admin`)
 - **File permissions** — Vault directory locked to `0700`, database to `0600`
 
 ## Documentation

@@ -46,13 +46,14 @@ This does three things:
 maestrovault set api-key --value "sk-abc123xyz"
 ```
 
-You can also add labels for organization:
+You can also add metadata for organization and specify an environment:
 
 ```bash
 maestrovault set db-password \
   --value "p@ssw0rd" \
-  --label env=production \
-  --label service=postgres
+  --env production \
+  --metadata service=postgres \
+  --metadata team=backend
 ```
 
 If you omit `--value`, MaestroVault reads from stdin (useful for piping):
@@ -83,10 +84,16 @@ maestrovault get api-key -o json
 maestrovault list
 ```
 
-Filter by label:
+Filter by metadata:
 
 ```bash
-maestrovault list --label env=production
+maestrovault list --metadata-key service --metadata-value postgres
+```
+
+Filter by environment:
+
+```bash
+maestrovault list --env production
 ```
 
 ## Search
@@ -95,7 +102,7 @@ maestrovault list --label env=production
 maestrovault search postgres
 ```
 
-Searches secret names and label keys/values.
+Searches secret names, environments, and metadata in real time.
 
 ## Copy to clipboard
 
@@ -157,7 +164,7 @@ maestrovault import --format env .env
 maestrovault touchid enable
 ```
 
-Once enabled, every `vault.Open()` operation (which backs every CLI command) will prompt for biometric authentication.
+Once enabled, every command that accesses the vault will prompt for biometric authentication.
 
 ```bash
 maestrovault touchid status   # Check current state

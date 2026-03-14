@@ -23,7 +23,7 @@ const (
 
 // Server is the MaestroVault REST API server.
 type Server struct {
-	vault    *vault.Vault
+	vault    vault.Vault
 	tokens   *TokenStore
 	listener net.Listener
 	http     *http.Server
@@ -41,7 +41,7 @@ type ServerOpts struct {
 }
 
 // NewServer creates a new API server backed by the given vault.
-func NewServer(v *vault.Vault, opts ServerOpts) (*Server, error) {
+func NewServer(v vault.Vault, opts ServerOpts) (*Server, error) {
 	sockPath := opts.SocketPath
 	if sockPath == "" {
 		sockPath = filepath.Join(vault.Dir(), DefaultSocketName)

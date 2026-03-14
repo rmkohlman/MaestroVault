@@ -26,14 +26,14 @@ func main() {
         log.Fatal(err)
     }
 
-    // Store a secret
-    err = c.Set("api-key", "sk-abc123", map[string]string{"env": "dev"})
+    // Store a secret in the "dev" environment
+    err = c.Set("api-key", "dev", "sk-abc123", map[string]any{"service": "api"})
     if err != nil {
         log.Fatal(err)
     }
 
     // Retrieve it
-    secret, err := c.Get("api-key")
+    secret, err := c.Get("api-key", "dev")
     if err != nil {
         log.Fatal(err)
     }
@@ -59,42 +59,42 @@ c, err := client.New("mvt_token", client.WithTimeout(10 * time.Second))
 ### Get
 
 ```go
-secret, err := c.Get("db-password")
-// secret.Name, secret.Value, secret.Labels, secret.CreatedAt, secret.UpdatedAt
+secret, err := c.Get("db-password", "prod")
+// secret.Name, secret.Environment, secret.Value, secret.Metadata, secret.CreatedAt, secret.UpdatedAt
 ```
 
 ### List
 
 ```go
-secrets, err := c.List()
+secrets, err := c.List("prod") // pass "" for all environments
 for _, s := range secrets {
-    fmt.Println(s.Name)
+    fmt.Println(s.Name, s.Environment)
 }
 ```
 
-### List by Label
+### List by Metadata
 
 ```go
-secrets, err := c.ListByLabel("env", "prod")
+secrets, err := c.ListByMetadata("service", "postgres")
 ```
 
 ### Set
 
 ```go
-err := c.Set("name", "value", map[string]string{"key": "val"})
+err := c.Set("name", "prod", "value", map[string]any{"key": "val"})
 ```
 
 ### Edit
 
 ```go
 newVal := "updated-value"
-err := c.Edit("name", &newVal, nil) // nil labels = keep existing
+err := c.Edit("name", "prod", &newVal, nil) // nil metadata = keep existing
 ```
 
 ### Delete
 
 ```go
-err := c.Delete("name")
+err := c.Delete("name", "prod")
 ```
 
 ## Search
@@ -175,11 +175,12 @@ if err != nil {
 
 ```go
 type SecretEntry struct {
-    Name      string
-    Value     string
-    Labels    map[string]string
-    CreatedAt string
-    UpdatedAt string
+    Name        string         `json:"name"`
+    Environment string         `json:"environment"`
+    Value       string         `json:"value,omitempty"`
+    Metadata    map[string]any `json:"metadata,omitempty"`
+    CreatedAt   string         `json:"created_at"`
+    UpdatedAt   string         `json:"updated_at"`
 }
 ```
 
@@ -187,10 +188,10 @@ type SecretEntry struct {
 
 ```go
 type VaultInfo struct {
-    Dir         string
-    DBPath      string
-    DBSize      int64
-    SecretCount int
+    Dir         string `json:"dir"`
+    DBPath      string `json:"db_path"`
+    DBSize      int64  `json:"db_size_bytes"`
+    SecretCount int    `json:"secret_count"`
 }
 ```
 
@@ -198,13 +199,14 @@ type VaultInfo struct {
 
 ```go
 type GenerateOpts struct {
-    Name      string
-    Length    int
-    Uppercase *bool
-    Lowercase *bool
-    Digits    *bool
-    Symbols   *bool
-    Labels    map[string]string
+    Name        string         `json:"name,omitempty"`
+    Environment string         `json:"environment,omitempty"`
+    Length      int            `json:"length,omitempty"`
+    Uppercase   *bool          `json:"uppercase,omitempty"`
+    Lowercase   *bool          `json:"lowercase,omitempty"`
+    Digits      *bool          `json:"digits,omitempty"`
+    Symbols     *bool          `json:"symbols,omitempty"`
+    Metadata    map[string]any `json:"metadata,omitempty"`
 }
 ```
 
@@ -212,11 +214,11 @@ type GenerateOpts struct {
 
 ```go
 type TokenInfo struct {
-    ID         string
-    Name       string
-    Scopes     []string
-    CreatedAt  time.Time
-    ExpiresAt  *time.Time
-    LastUsedAt *time.Time
+    ID         string     `json:"id"`
+    Name       string     `json:"name"`
+    Scopes     []string   `json:"scopes"`
+    CreatedAt  time.Time  `json:"created_at"`
+    ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+    LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 ```
