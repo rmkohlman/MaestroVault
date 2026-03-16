@@ -786,7 +786,7 @@ func (m SecretModal) View() string {
 
 func (m SecretModal) viewModeView() string {
 	var b strings.Builder
-	w := 56
+	w := m.modalWidth()
 
 	// Title.
 	title := " " + m.entry.Name
@@ -903,7 +903,7 @@ func (m SecretModal) viewModeView() string {
 
 func (m SecretModal) editModeView(titleText string) string {
 	var b strings.Builder
-	w := 56
+	w := m.modalWidth()
 
 	// Title.
 	title := " " + titleText
@@ -946,7 +946,7 @@ func (m SecretModal) editModeView(titleText string) string {
 	// Dynamic field pairs.
 	if len(m.fieldPairs) > 0 {
 		b.WriteString("\n")
-		b.WriteString("  " + MutedStyle.Render("── Fields ──────────────────"))
+		b.WriteString("  " + MutedStyle.Render("── Fields "+strings.Repeat("─", w-14)))
 		b.WriteString("\n")
 		for i, fp := range m.fieldPairs {
 			keyFocusIdx := fixedFieldCount + i*2
@@ -1041,6 +1041,20 @@ func (m SecretModal) centerStandalone(content string) string {
 }
 
 // ── Helpers ───────────────────────────────────────────────────
+
+// modalWidth returns the content width for the modal, scaled to the terminal
+// width. The modal border + padding consume ~6 columns, so we subtract that
+// and cap between a floor of 56 and a ceiling of 120.
+func (m SecretModal) modalWidth() int {
+	w := m.width - 6 // border (2) + padding (2*2)
+	if w < 56 {
+		w = 56
+	}
+	if w > 120 {
+		w = 120
+	}
+	return w
+}
 
 // sortedFieldKeys returns the keys of a string map in sorted order.
 func sortedFieldKeys(m map[string]string) []string {
