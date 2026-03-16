@@ -247,6 +247,23 @@ func (m Model) viewDetailScreen() string {
 		b.WriteString("\n\n")
 	}
 
+	// Fields.
+	if len(s.Fields) > 0 {
+		b.WriteString(MutedStyle.Render("  Fields:"))
+		b.WriteString("\n")
+		keys := sortedFieldKeys(s.Fields)
+		for _, key := range keys {
+			b.WriteString("    " + FieldKeyStyle.Render(key) + " ")
+			if m.valueMasked {
+				b.WriteString(MaskedValueStyle.Render(maskValue(s.Fields[key])))
+			} else {
+				b.WriteString(SecretValueStyle.Render(s.Fields[key]))
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
 	// Timestamps.
 	if s.CreatedAt != "" {
 		b.WriteString(MutedStyle.Render("  Created: ") + s.CreatedAt)
