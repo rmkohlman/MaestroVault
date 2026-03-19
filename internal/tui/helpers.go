@@ -371,3 +371,47 @@ func humanSize(b int64) string {
 		return fmt.Sprintf("%d B", b)
 	}
 }
+
+// largeValueThreshold is the character count above which a value is considered
+// "large" and routes to multi-line rendering / textarea editing.
+const largeValueThreshold = 200
+
+// isLargeValue returns true if the value exceeds the threshold or contains
+// newlines, indicating it should use multi-line rendering.
+func isLargeValue(v string) bool {
+	return len(v) > largeValueThreshold || strings.Contains(v, "\n")
+}
+
+// wrapAndTruncate word-wraps value to width columns, then truncates to
+// maxLines visible lines. It returns the visible text and the total number of
+// wrapped lines.
+func wrapAndTruncate(value string, width, maxLines int) (string, int) {
+	if width <= 0 {
+		width = 60
+	}
+	var lines []string
+	for _, raw := range strings.Split(value, "\n") {
+		if len(raw) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		for len(raw) > 0 {
+			if len(raw) <= width {
+				lines = append(lines, raw)
+				break
+			}
+			// Try to break at the last space within width.
+			cut := width
+			if idx := strings.LastIndex(raw[:width], " "); idx > 0 {
+				cut = idx + 1 // include the space on this line
+			}
+			lines = append(lines, raw[:cut])
+			raw = raw[cut:]
+		}
+	}
+	total := len(lines)
+	if maxLines > 0 && total > maxLines {
+		lines = lines[:maxLines]
+	}
+	return strings.Join(lines, "\n"), total
+}

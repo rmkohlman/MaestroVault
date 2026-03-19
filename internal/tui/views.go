@@ -388,7 +388,7 @@ func (m Model) viewHelpOverlay() string {
 		b.WriteString(AccentStyle.Render(" Secret Modal (Add/Edit/View)") + "\n")
 		b.WriteString(helpLine("↑ / ↓ / Tab", "Navigate fields"))
 		b.WriteString(helpLine("ctrl+r", "Toggle value visibility"))
-		b.WriteString(helpLine("ctrl+a", "Add field (edit/add mode)"))
+		b.WriteString(helpLine("ctrl+A", "Add field (edit/add mode)"))
 		b.WriteString(helpLine("ctrl+d", "Remove field (edit/add mode)"))
 		b.WriteString(helpLine("Enter", "Save"))
 		b.WriteString(helpLine("p / Space", "Peek value (view mode)"))
@@ -688,13 +688,15 @@ func (m Model) checkMark(on bool) string {
 }
 
 func (m Model) centerOverlay(content string) string {
-	// Vertically center the modal.
-	contentHeight := strings.Count(content, "\n") + 1
-	topPad := 0
-	if m.height > contentHeight+2 {
-		topPad = (m.height - contentHeight) / 3
+	w := m.width
+	if w <= 0 {
+		w = 80
 	}
-	return strings.Repeat("\n", topPad) + content
+	h := m.height
+	if h <= 0 {
+		h = 24
+	}
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
 // Column width calculations for the list view.

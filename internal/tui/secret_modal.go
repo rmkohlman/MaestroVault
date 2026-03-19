@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/rmkohlman/MaestroVault/internal/clipboard"
 	"github.com/rmkohlman/MaestroVault/internal/vault"
 )
@@ -131,6 +133,16 @@ type SecretModal struct {
 	saving    bool   // true while save cmd is in-flight
 	savedMsg  string // set briefly after successful save
 	savedKind string // "success"
+
+	// Large value / textarea state.
+	valueArea   textarea.Model
+	useTextarea bool // true when value field uses textarea instead of textinput
+
+	// Full view overlay (view mode).
+	showFullView    bool
+	fullViewContent string
+	fullViewTitle   string
+	fullViewScroll  int
 }
 
 // ── Constructors ──────────────────────────────────────────────
@@ -205,7 +217,7 @@ func (m *SecretModal) initInputs() {
 
 	vi := textinput.New()
 	vi.Placeholder = "secret value (optional if fields set)"
-	vi.CharLimit = 4096
+	vi.CharLimit = 0 // unlimited — supports PEM certs, long tokens, etc.
 	vi.EchoMode = textinput.EchoPassword
 
 	mi := textinput.New()
@@ -218,11 +230,31 @@ func (m *SecretModal) initInputs() {
 	m.metadataInput = mi
 }
 
+// initValueTextarea switches the value field to a multi-line textarea,
+// carrying over the given content. Called when a large value is detected.
+func (m *SecretModal) initValueTextarea(value string) {
+	ta := textarea.New()
+	ta.SetValue(value)
+	w := m.modalWidth() - 16 // space for label + cursor prefix
+	if w < 30 {
+		w = 30
+	}
+	ta.SetWidth(w)
+	ta.SetHeight(6)
+	ta.CharLimit = 0
+	ta.ShowLineNumbers = false
+	m.valueArea = ta
+	m.useTextarea = true
+}
+
 func (m *SecretModal) focusCurrentField() {
 	m.nameInput.Blur()
 	m.envInput.Blur()
 	m.valueInput.Blur()
 	m.metadataInput.Blur()
+	if m.useTextarea {
+		m.valueArea.Blur()
+	}
 	for i := range m.fieldPairs {
 		m.fieldPairs[i].keyInput.Blur()
 		m.fieldPairs[i].valueInput.Blur()
@@ -234,7 +266,11 @@ func (m *SecretModal) focusCurrentField() {
 	case fieldEnv:
 		m.envInput.Focus()
 	case fieldValue:
-		m.valueInput.Focus()
+		if m.useTextarea {
+			m.valueArea.Focus()
+		} else {
+			m.valueInput.Focus()
+		}
 	case fieldMetadata:
 		m.metadataInput.Focus()
 	default:
@@ -323,7 +359,11 @@ func (m SecretModal) forwardToInput(msg tea.Msg) (SecretModal, tea.Cmd) {
 	case m.focusField == fieldEnv:
 		m.envInput, cmd = m.envInput.Update(msg)
 	case m.focusField == fieldValue:
-		m.valueInput, cmd = m.valueInput.Update(msg)
+		if m.useTextarea {
+			m.valueArea, cmd = m.valueArea.Update(msg)
+		} else {
+			m.valueInput, cmd = m.valueInput.Update(msg)
+		}
 	case m.focusField == fieldMetadata:
 		m.metadataInput, cmd = m.metadataInput.Update(msg)
 	case m.focusField >= fixedFieldCount:
@@ -363,6 +403,11 @@ func (m SecretModal) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ── View mode key handling ────────────────────────────────────
 
 func (m SecretModal) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Full view overlay intercepts all keys.
+	if m.showFullView {
+		return m.handleFullViewKey(msg)
+	}
+
 	key := msg.String()
 
 	// Count navigable items: value (if non-empty) + fields.
@@ -386,6 +431,16 @@ func (m SecretModal) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		// Copy focused item value to clipboard.
 		return m, m.copyFocusedValue()
+	case "f":
+		// Open full view for the focused item if it's revealed and large.
+		val, title := m.focusedViewValue()
+		if val != "" && isLargeValue(val) {
+			m.showFullView = true
+			m.fullViewContent = val
+			m.fullViewTitle = title
+			m.fullViewScroll = 0
+		}
+		return m, nil
 	case "e":
 		if m.entry != nil {
 			m.mode = modalEdit
@@ -393,8 +448,13 @@ func (m SecretModal) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.origEnv = m.entry.Environment
 			m.nameInput.SetValue(m.entry.Name)
 			m.envInput.SetValue(m.entry.Environment)
-			m.valueInput.SetValue(m.entry.Value)
 			m.metadataInput.SetValue(formatMetadataPlain(m.entry.Metadata))
+			// Use textarea for large values, textinput for short ones.
+			if isLargeValue(m.entry.Value) {
+				m.initValueTextarea(m.entry.Value)
+			} else {
+				m.valueInput.SetValue(m.entry.Value)
+			}
 			// Populate field pairs.
 			m.fieldPairs = nil
 			if len(m.entry.Fields) > 0 {
@@ -476,6 +536,34 @@ func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	total := totalInputCount(len(m.fieldPairs))
 
+	// When textarea is focused, only intercept field-management keys.
+	// Everything else (up, down, enter, chars) goes to the textarea.
+	if m.useTextarea && m.focusField == fieldValue {
+		switch {
+		case msg.Type == tea.KeyCtrlR:
+			// No EchoPassword for textarea — no-op.
+			return m, nil
+		case msg.Type == tea.KeyCtrlA:
+			m.fieldPairs = append(m.fieldPairs, newFieldPair("", ""))
+			m.focusField = fixedFieldCount + (len(m.fieldPairs)-1)*2
+			m.focusCurrentField()
+			return m, textinput.Blink
+		case msg.Type == tea.KeyCtrlD:
+			// Focus is on value, not a field pair — no-op.
+			return m, nil
+		case msg.Type == tea.KeyTab:
+			m.focusField = (m.focusField + 1) % total
+			m.focusCurrentField()
+			return m, textinput.Blink
+		case msg.String() == "shift+tab":
+			m.focusField = (m.focusField - 1 + total) % total
+			m.focusCurrentField()
+			return m, textinput.Blink
+		default:
+			return m.forwardKeyToInput(msg)
+		}
+	}
+
 	switch {
 	case msg.Type == tea.KeyCtrlR:
 		// Toggle value visibility for the main value input or focused field value.
@@ -556,7 +644,16 @@ func (m SecretModal) forwardKeyToInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.focusField == fieldEnv:
 		m.envInput, cmd = m.envInput.Update(msg)
 	case m.focusField == fieldValue:
-		m.valueInput, cmd = m.valueInput.Update(msg)
+		if m.useTextarea {
+			m.valueArea, cmd = m.valueArea.Update(msg)
+		} else {
+			m.valueInput, cmd = m.valueInput.Update(msg)
+			// In add mode, swap to textarea if value exceeds threshold.
+			if m.mode == modalAdd && !m.useTextarea && isLargeValue(m.valueInput.Value()) {
+				m.initValueTextarea(m.valueInput.Value())
+				m.valueArea.Focus()
+			}
+		}
 	case m.focusField == fieldMetadata:
 		m.metadataInput, cmd = m.metadataInput.Update(msg)
 	case m.focusField >= fixedFieldCount:
@@ -589,6 +686,7 @@ func (m SecretModal) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.valueMasked = true
 			m.valueRevealed = false
 			m.valueInput.EchoMode = textinput.EchoPassword
+			m.useTextarea = false
 			m.blurAll()
 			return m, nil
 		}
@@ -623,6 +721,9 @@ func (m SecretModal) saveSecret() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	value := m.valueInput.Value()
+	if m.useTextarea {
+		value = m.valueArea.Value()
+	}
 
 	// Collect field pairs.
 	fields := make(map[string]string)
@@ -753,6 +854,8 @@ func (m SecretModal) closeModal() (tea.Model, tea.Cmd) {
 	m.blurAll()
 	m.valueRevealed = false
 	m.valueInput.EchoMode = textinput.EchoPassword
+	m.useTextarea = false
+	m.showFullView = false
 	if m.standalone {
 		return m, tea.Quit
 	}
@@ -764,6 +867,9 @@ func (m *SecretModal) blurAll() {
 	m.envInput.Blur()
 	m.valueInput.Blur()
 	m.metadataInput.Blur()
+	if m.useTextarea {
+		m.valueArea.Blur()
+	}
 	for i := range m.fieldPairs {
 		m.fieldPairs[i].keyInput.Blur()
 		m.fieldPairs[i].valueInput.Blur()
@@ -773,6 +879,9 @@ func (m *SecretModal) blurAll() {
 // ── View ──────────────────────────────────────────────────────
 
 func (m SecretModal) View() string {
+	if m.showFullView {
+		return m.fullViewView()
+	}
 	switch m.mode {
 	case modalView:
 		return m.viewModeView()
@@ -806,14 +915,26 @@ func (m SecretModal) viewModeView() string {
 		if m.viewCursor == itemIdx {
 			cursor = AccentStyle.Render("▸ ")
 		}
-		b.WriteString(cursor + MutedStyle.Render("Value       "))
 		masked, _ := m.viewMasks[itemIdx]
 		if masked {
+			b.WriteString(cursor + MutedStyle.Render("Value       "))
 			b.WriteString(MaskedValueStyle.Render(maskValue(m.entry.Value)))
+			b.WriteString("\n")
+		} else if isLargeValue(m.entry.Value) {
+			b.WriteString(cursor + MutedStyle.Render("Value"))
+			b.WriteString("\n")
+			visible, total := wrapAndTruncate(m.entry.Value, w-4, 6)
+			for _, line := range strings.Split(visible, "\n") {
+				b.WriteString("    " + SecretValueStyle.Render(line) + "\n")
+			}
+			if total > 6 {
+				b.WriteString("    " + MutedStyle.Render(fmt.Sprintf("(%d more lines — f full view · c copy)", total-6)) + "\n")
+			}
 		} else {
+			b.WriteString(cursor + MutedStyle.Render("Value       "))
 			b.WriteString(SecretValueStyle.Render(m.entry.Value))
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 		itemIdx++
 	}
 
@@ -829,14 +950,27 @@ func (m SecretModal) viewModeView() string {
 				cursor = AccentStyle.Render("▸ ")
 			}
 			label := padRight(key, 12)
-			b.WriteString(cursor + FieldKeyStyle.Render(label) + " ")
 			masked, _ := m.viewMasks[itemIdx]
+			fieldVal := m.entry.Fields[key]
 			if masked {
-				b.WriteString(MaskedValueStyle.Render(maskValue(m.entry.Fields[key])))
+				b.WriteString(cursor + FieldKeyStyle.Render(label) + " ")
+				b.WriteString(MaskedValueStyle.Render(maskValue(fieldVal)))
+				b.WriteString("\n")
+			} else if isLargeValue(fieldVal) {
+				b.WriteString(cursor + FieldKeyStyle.Render(key))
+				b.WriteString("\n")
+				visible, total := wrapAndTruncate(fieldVal, w-4, 6)
+				for _, line := range strings.Split(visible, "\n") {
+					b.WriteString("    " + SecretValueStyle.Render(line) + "\n")
+				}
+				if total > 6 {
+					b.WriteString("    " + MutedStyle.Render(fmt.Sprintf("(%d more lines — f full view · c copy)", total-6)) + "\n")
+				}
 			} else {
-				b.WriteString(SecretValueStyle.Render(m.entry.Fields[key]))
+				b.WriteString(cursor + FieldKeyStyle.Render(label) + " ")
+				b.WriteString(SecretValueStyle.Render(fieldVal))
+				b.WriteString("\n")
 			}
-			b.WriteString("\n")
 			itemIdx++
 		}
 	}
@@ -887,6 +1021,14 @@ func (m SecretModal) viewModeView() string {
 		HelpKeyStyle.Render("↑/↓")+" "+HelpDescStyle.Render("navigate"),
 		HelpKeyStyle.Render("p")+" "+HelpDescStyle.Render("peek"),
 		HelpKeyStyle.Render("c")+" "+HelpDescStyle.Render("copy"),
+	)
+	// Show full view hint if the focused item has a large revealed value.
+	if val, _ := m.focusedViewValue(); val != "" && isLargeValue(val) {
+		helpParts = append(helpParts,
+			HelpKeyStyle.Render("f")+" "+HelpDescStyle.Render("full view"),
+		)
+	}
+	helpParts = append(helpParts,
 		HelpKeyStyle.Render("e")+" "+HelpDescStyle.Render("edit"),
 		HelpKeyStyle.Render("q")+" "+HelpDescStyle.Render("close"),
 	)
@@ -934,6 +1076,17 @@ func (m SecretModal) editModeView(titleText string) string {
 		if m.focusField == f.idx {
 			cursor = AccentStyle.Render("▸ ")
 			labelStyle = AccentStyle
+		}
+		// Textarea rendering for value field.
+		if f.idx == fieldValue && m.useTextarea {
+			extra := MutedStyle.Render(" (multi-line)")
+			b.WriteString(cursor + labelStyle.Render(f.label) + extra)
+			b.WriteString("\n")
+			// Indent the textarea view.
+			for _, line := range strings.Split(m.valueArea.View(), "\n") {
+				b.WriteString("    " + line + "\n")
+			}
+			continue
 		}
 		extra := ""
 		if f.idx == fieldValue && m.focusField == fieldValue && m.valueRevealed {
@@ -1004,7 +1157,7 @@ func (m SecretModal) editModeView(titleText string) string {
 		helpParts = append(helpParts,
 			HelpKeyStyle.Render("↑/↓")+" "+HelpDescStyle.Render("navigate"),
 			HelpKeyStyle.Render("ctrl+r")+" "+HelpDescStyle.Render("peek"),
-			HelpKeyStyle.Render("ctrl+a")+" "+HelpDescStyle.Render("add field"),
+			HelpKeyStyle.Render("ctrl+A")+" "+HelpDescStyle.Render("add field"),
 		)
 		if len(m.fieldPairs) > 0 {
 			helpParts = append(helpParts,
@@ -1027,17 +1180,157 @@ func (m SecretModal) editModeView(titleText string) string {
 	return modal
 }
 
+// ── Full view overlay ─────────────────────────────────────────
+
+// focusedViewValue returns the decrypted value and label for the currently
+// focused item in view mode.  Returns ("","") when the item is masked or
+// there is no entry.
+func (m SecretModal) focusedViewValue() (string, string) {
+	if m.entry == nil {
+		return "", ""
+	}
+	// Check if the item is revealed (not masked).
+	masked, _ := m.viewMasks[m.viewCursor]
+	if masked {
+		return "", ""
+	}
+	hasValue := m.entry.Value != ""
+	if hasValue && m.viewCursor == 0 {
+		return m.entry.Value, m.entry.Name
+	}
+	fieldIdx := m.viewCursor
+	if hasValue {
+		fieldIdx--
+	}
+	keys := sortedFieldKeys(m.entry.Fields)
+	if fieldIdx >= 0 && fieldIdx < len(keys) {
+		key := keys[fieldIdx]
+		return m.entry.Fields[key], fmt.Sprintf("%s.%s", m.entry.Name, key)
+	}
+	return "", ""
+}
+
+// handleFullViewKey handles keys when the full view overlay is active.
+func (m SecretModal) handleFullViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "f":
+		m.showFullView = false
+		return m, nil
+	case "j", "down":
+		m.fullViewScroll++
+		return m, nil
+	case "k", "up":
+		if m.fullViewScroll > 0 {
+			m.fullViewScroll--
+		}
+		return m, nil
+	case "c":
+		// Copy the full value.
+		val := m.fullViewContent
+		title := m.fullViewTitle
+		return m, func() tea.Msg {
+			if _, err := clipboard.CopyWithClear(val, 45*time.Second); err != nil {
+				return secretModalResultMsg{toast: fmt.Sprintf("clipboard: %s", err), kind: "error"}
+			}
+			return toastMsg{text: fmt.Sprintf("Copied %q to clipboard (clears in 45s)", title), kind: "success"}
+		}
+	}
+	return m, nil
+}
+
+// fullViewView renders the scrollable full view overlay.
+func (m SecretModal) fullViewView() string {
+	tw := m.width
+	if tw <= 0 {
+		tw = 80
+	}
+	th := m.height
+	if th <= 0 {
+		th = 24
+	}
+
+	// Overlay dimensions: ~90% width, ~80% height.
+	ow := tw * 90 / 100
+	if ow < 60 {
+		ow = 60
+	}
+	if ow > tw {
+		ow = tw
+	}
+	oh := th * 80 / 100
+	if oh < 12 {
+		oh = 12
+	}
+	if oh > th {
+		oh = th
+	}
+
+	contentWidth := ow - 6 // borders + padding
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+
+	// Wrap all content (maxLines=0 means no truncation).
+	wrapped, _ := wrapAndTruncate(m.fullViewContent, contentWidth, 0)
+	allLines := strings.Split(wrapped, "\n")
+
+	// Visible area: subtract title (2 lines), help bar (2 lines), borders (2 lines).
+	visibleCount := oh - 6
+	if visibleCount < 1 {
+		visibleCount = 1
+	}
+
+	// Clamp scroll.
+	maxScroll := len(allLines) - visibleCount
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll := m.fullViewScroll
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+
+	end := scroll + visibleCount
+	if end > len(allLines) {
+		end = len(allLines)
+	}
+	visible := strings.Join(allLines[scroll:end], "\n")
+
+	var b strings.Builder
+	b.WriteString(TitleStyle.Render(" " + m.fullViewTitle))
+	b.WriteString("\n\n")
+	b.WriteString(SecretValueStyle.Render(visible))
+	b.WriteString("\n\n")
+
+	// Scroll indicator + help.
+	scrollInfo := fmt.Sprintf("line %d/%d", scroll+1, len(allLines))
+	helpParts := []string{
+		HelpKeyStyle.Render("↑/↓") + " " + HelpDescStyle.Render("scroll"),
+		HelpKeyStyle.Render("c") + " " + HelpDescStyle.Render("copy"),
+		HelpKeyStyle.Render("esc") + " " + HelpDescStyle.Render("close"),
+		MutedStyle.Render(scrollInfo),
+	}
+	b.WriteString("  " + strings.Join(helpParts, MutedStyle.Render("  ·  ")))
+
+	content := b.String()
+	modal := ModalStyle.Width(contentWidth).Render(content)
+
+	if m.standalone {
+		return m.centerStandalone(modal)
+	}
+	return modal
+}
+
 func (m SecretModal) centerStandalone(content string) string {
-	contentHeight := strings.Count(content, "\n") + 1
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
 	h := m.height
 	if h <= 0 {
 		h = 24
 	}
-	topPad := 0
-	if h > contentHeight+2 {
-		topPad = (h - contentHeight) / 3
-	}
-	return strings.Repeat("\n", topPad) + content
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
 // ── Helpers ───────────────────────────────────────────────────
