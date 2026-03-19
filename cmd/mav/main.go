@@ -17,6 +17,7 @@
 //	mav import <file>         Import secrets from file
 //	mav destroy               Destroy the vault completely
 //	mav tui                   Launch interactive TUI
+//	mav settings              Open interactive settings
 //	mav serve                 Start the REST API server
 //	mav token create          Create an API token
 //	mav token list            List API tokens
@@ -108,6 +109,7 @@ The master key is stored securely in the macOS Keychain.`,
 		newImportCmd(),
 		newDestroyCmd(),
 		newTUICmd(),
+		newSettingsCmd(),
 		newServeCmd(),
 		newTokenCmd(),
 		newTouchIDCmd(),
@@ -1221,6 +1223,37 @@ Set "vim_mode": true in ~/.maestrovault/config.json to enable by default.`,
 
 	cmd.Flags().BoolVar(&vimMode, "vim", false, "Enable vim modes (Normal/Visual/Insert) with mode indicator")
 	return cmd
+}
+
+// ── settings command ──────────────────────────────────────────
+
+func newSettingsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "settings",
+		Short: "Open interactive settings",
+		Long: `Launch an interactive settings screen for MaestroVault.
+Requires TouchID authentication if enabled.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := vault.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			// Gate behind TouchID if enabled.
+			if cfg.TouchID {
+				auth := touchid.New()
+				if err := auth.Authenticate("MaestroVault settings"); err != nil {
+					return fmt.Errorf("authentication required: %w", err)
+				}
+			}
+
+			p := tea.NewProgram(tui.NewSettingsModel(cfg), tea.WithAltScreen())
+			if _, err := p.Run(); err != nil {
+				return fmt.Errorf("settings: %w", err)
+			}
+			return nil
+		},
+	}
 }
 
 // ── serve command ─────────────────────────────────────────────
