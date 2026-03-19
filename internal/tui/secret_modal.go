@@ -680,16 +680,6 @@ func (m SecretModal) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.Type == tea.KeyEscape {
-		// If we came from view mode, go back to view.
-		if m.entry != nil {
-			m.mode = modalView
-			m.valueMasked = true
-			m.valueRevealed = false
-			m.valueInput.EchoMode = textinput.EchoPassword
-			m.useTextarea = false
-			m.blurAll()
-			return m, nil
-		}
 		return m.closeModal()
 	}
 

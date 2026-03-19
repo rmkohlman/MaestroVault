@@ -321,16 +321,10 @@ func maxIdx(secrets []vault.SecretEntry) int {
 	return len(secrets) - 1
 }
 
-// maskValue returns a masked representation of a value.
-func maskValue(v string) string {
-	n := len(v)
-	if n > 40 {
-		n = 40
-	}
-	if n < 8 {
-		n = 8
-	}
-	return strings.Repeat("●", n)
+// maskValue returns a fixed-length masked representation regardless of the
+// actual value length, so the mask never leaks secret size information.
+func maskValue(_ string) string {
+	return "●●●●●●●●"
 }
 
 // truncate truncates a string to maxLen and appends "..." if needed.
