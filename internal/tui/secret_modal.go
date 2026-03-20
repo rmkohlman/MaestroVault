@@ -326,7 +326,7 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				w = 30
 			}
 			m.valueArea.SetWidth(w)
-			m.valueArea.SetHeight(m.textareaHeight())
+			m.recalcTextareaHeight()
 		}
 		return m, nil
 
@@ -342,6 +342,7 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.toast = msg.toast
 		m.toastKind = msg.kind
+		m.recalcTextareaHeight() // toast changes overhead
 		return m, nil
 
 	case secretModalDoneMsg:
@@ -554,6 +555,7 @@ func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case msg.Type == tea.KeyCtrlA:
 			m.fieldPairs = append(m.fieldPairs, newFieldPair("", ""))
+			m.recalcTextareaHeight() // field pair changes overhead
 			m.focusField = fixedFieldCount + (len(m.fieldPairs)-1)*2
 			m.focusCurrentField()
 			return m, textinput.Blink
@@ -601,6 +603,7 @@ func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case msg.Type == tea.KeyCtrlA:
 		// Add new field pair.
 		m.fieldPairs = append(m.fieldPairs, newFieldPair("", ""))
+		m.recalcTextareaHeight() // field pair changes overhead
 		// Focus the new key input.
 		m.focusField = fixedFieldCount + (len(m.fieldPairs)-1)*2
 		m.focusCurrentField()
@@ -613,6 +616,7 @@ func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			pairIdx := idx / 2
 			if pairIdx >= 0 && pairIdx < len(m.fieldPairs) {
 				m.fieldPairs = append(m.fieldPairs[:pairIdx], m.fieldPairs[pairIdx+1:]...)
+				m.recalcTextareaHeight() // field pair changes overhead
 				// Adjust focus.
 				newTotal := totalInputCount(len(m.fieldPairs))
 				if m.focusField >= newTotal {
@@ -717,6 +721,7 @@ func (m SecretModal) saveSecret() (tea.Model, tea.Cmd) {
 	if name == "" {
 		m.toast = "Name cannot be empty"
 		m.toastKind = "error"
+		m.recalcTextareaHeight() // toast changes overhead
 		return m, nil
 	}
 	value := m.valueInput.Value()
@@ -738,6 +743,7 @@ func (m SecretModal) saveSecret() (tea.Model, tea.Cmd) {
 	if value == "" && len(fields) == 0 {
 		m.toast = "Value or at least one field required"
 		m.toastKind = "error"
+		m.recalcTextareaHeight() // toast changes overhead
 		return m, nil
 	}
 
@@ -746,6 +752,7 @@ func (m SecretModal) saveSecret() (tea.Model, tea.Cmd) {
 
 	m.saving = true
 	m.toast = ""
+	m.recalcTextareaHeight() // toast cleared changes overhead
 
 	v := m.vault
 
@@ -1039,7 +1046,13 @@ func (m SecretModal) viewModeView() string {
 	maxVisible := m.modalHeight()
 	content, _ = viewportRender(content, maxVisible, 0, m.estimateViewFocusLine())
 
-	modal := ModalStyle.Width(w).MaxHeight(m.height - 2).Render(content)
+	// Safety cap: MaxHeight prevents the rendered modal from ever
+	// exceeding the terminal, even if the content math is slightly off.
+	maxH := m.height
+	if maxH < 16 {
+		maxH = 16
+	}
+	modal := ModalStyle.Width(w).MaxHeight(maxH).Render(content)
 
 	if m.standalone {
 		return m.centerStandalone(modal)
@@ -1179,11 +1192,15 @@ func (m SecretModal) editModeView(titleText string) string {
 
 	content := b.String()
 
-	// The textarea has built-in scrolling, so if textareaHeight() is
-	// correct the form already fits. Apply a lipgloss MaxHeight safety cap
-	// to guarantee we never overflow the terminal even if the line math
+	// The textarea has built-in scrolling and textareaHeight() is
+	// calculated to fit within the terminal. Apply a lipgloss MaxHeight
+	// safety cap to guarantee we never overflow even if the line math
 	// is slightly off.
-	modal := ModalStyle.Width(w).MaxHeight(m.height - 2).Render(content)
+	maxH := m.height
+	if maxH < 16 {
+		maxH = 16
+	}
+	modal := ModalStyle.Width(w).MaxHeight(maxH).Render(content)
 
 	if m.standalone {
 		return m.centerStandalone(modal)
@@ -1373,12 +1390,15 @@ func (m SecretModal) modalHeight() int {
 
 // textareaHeight returns the ideal textarea height given how many other
 // fixed lines the edit/add form needs. This ensures the overall modal
-// fits within the terminal.
+// (including borders/padding) fits within the terminal height.
+//
+// The textarea has built-in scrolling, so clamping its height does NOT
+// hide content — the user simply scrolls within the component.
 func (m SecretModal) textareaHeight() int {
-	// Fixed overhead in edit mode:
-	//   title(1) + blank(1) = 2
-	//   name(1) + env(1) + value label(1) + metadata(1) = 4
-	//   blank before help(1) + help bar(1) = 2
+	// Fixed overhead in edit mode (lines that are NOT the textarea):
+	//   title(1) + blank(1)                        = 2
+	//   name(1) + env(1) + value label(1) + meta(1) = 4
+	//   blank before help(1) + help bar(1)          = 2
 	// Total fixed = 8
 	overhead := 8
 
@@ -1392,14 +1412,30 @@ func (m SecretModal) textareaHeight() int {
 		overhead += 2
 	}
 
-	avail := m.modalHeight() - overhead
+	// modalHeight() already accounts for border + padding (4 rows).
+	// But we also need to leave a small margin for the centering overlay
+	// and any rounding differences: subtract 2 extra safety rows from
+	// the terminal height so the rendered modal never overflows.
+	maxContent := m.height - 6 // border(2) + padding(2) + safety(2)
+	if maxContent < 12 {
+		maxContent = 12
+	}
+
+	avail := maxContent - overhead
 	if avail < 3 {
 		avail = 3
 	}
-	if avail > 20 {
-		avail = 20
-	}
 	return avail
+}
+
+// recalcTextareaHeight updates the textarea component height to match the
+// current terminal dimensions and form state. Call this after any change
+// that affects the available space (window resize, field add/remove, toast).
+func (m *SecretModal) recalcTextareaHeight() {
+	if !m.useTextarea {
+		return
+	}
+	m.valueArea.SetHeight(m.textareaHeight())
 }
 
 // sortedFieldKeys returns the keys of a string map in sorted order.

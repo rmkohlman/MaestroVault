@@ -103,6 +103,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Error: show in modal, keep open.
 		m.secretModal.toast = msg.toast
 		m.secretModal.toastKind = msg.kind
+		m.secretModal.recalcTextareaHeight() // toast changes overhead
 		return m, nil
 
 	case secretModalDoneMsg:
