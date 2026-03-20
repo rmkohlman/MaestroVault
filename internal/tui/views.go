@@ -266,13 +266,32 @@ func (m Model) viewDetailScreen() string {
 	}
 
 	// Value.
-	body.WriteString(MutedStyle.Render("  Value: "))
 	if m.valueMasked {
+		body.WriteString(MutedStyle.Render("  Value: "))
 		body.WriteString(MaskedValueStyle.Render(maskValue(s.Value)))
+		body.WriteString("\n")
+	} else if isLargeValue(s.Value) {
+		// Large or multi-line values: wrap to terminal width and render
+		// each line individually so viewportRender can crop by newline.
+		// Without this, a single long line (e.g., JWT, PEM on one line)
+		// would count as 1 newline-delimited line but wrap to dozens of
+		// visual lines in the terminal, causing overflow.
+		contentWidth := w - 4 // indent
+		if contentWidth < 20 {
+			contentWidth = 20
+		}
+		body.WriteString(MutedStyle.Render("  Value:"))
+		body.WriteString("\n")
+		wrapped, _ := wrapAndTruncate(s.Value, contentWidth, 0)
+		for _, line := range strings.Split(wrapped, "\n") {
+			body.WriteString("    " + SecretValueStyle.Render(line))
+			body.WriteString("\n")
+		}
 	} else {
+		body.WriteString(MutedStyle.Render("  Value: "))
 		body.WriteString(SecretValueStyle.Render(s.Value))
+		body.WriteString("\n")
 	}
-	body.WriteString("\n")
 
 	// Metadata.
 	if len(s.Metadata) > 0 {
@@ -285,15 +304,29 @@ func (m Model) viewDetailScreen() string {
 	if len(s.Fields) > 0 {
 		body.WriteString(MutedStyle.Render("  Fields:"))
 		body.WriteString("\n")
+		fieldContentWidth := w - 6 // "      " prefix = 6 chars
+		if fieldContentWidth < 20 {
+			fieldContentWidth = 20
+		}
 		keys := sortedFieldKeys(s.Fields)
 		for _, key := range keys {
-			body.WriteString("    " + FieldKeyStyle.Render(key) + " ")
 			if m.valueMasked {
+				body.WriteString("    " + FieldKeyStyle.Render(key) + " ")
 				body.WriteString(MaskedValueStyle.Render(maskValue(s.Fields[key])))
+				body.WriteString("\n")
+			} else if isLargeValue(s.Fields[key]) {
+				body.WriteString("    " + FieldKeyStyle.Render(key))
+				body.WriteString("\n")
+				wrapped, _ := wrapAndTruncate(s.Fields[key], fieldContentWidth, 0)
+				for _, line := range strings.Split(wrapped, "\n") {
+					body.WriteString("      " + SecretValueStyle.Render(line))
+					body.WriteString("\n")
+				}
 			} else {
+				body.WriteString("    " + FieldKeyStyle.Render(key) + " ")
 				body.WriteString(SecretValueStyle.Render(s.Fields[key]))
+				body.WriteString("\n")
 			}
-			body.WriteString("\n")
 		}
 	}
 

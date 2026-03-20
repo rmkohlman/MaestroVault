@@ -675,7 +675,6 @@ func TestSecretModal_ViewMode_Reveal_AllPaths(t *testing.T) {
 // TestDetailScreen_LargeValue_Revealed tests the NON-modal detail screen
 // (screenDetail) when a large value is revealed. This is the screen shown
 // when the user presses Enter on a secret in the list, then Space to peek.
-// THIS IS THE SUSPECTED OVERFLOW PATH.
 func TestDetailScreen_LargeValue_Revealed(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -716,6 +715,169 @@ func TestDetailScreen_LargeValue_Revealed(t *testing.T) {
 			if rawLines > tc.termHeight {
 				t.Errorf("OVERFLOW: viewDetailScreen() produces %d lines, exceeds terminal height %d (excess: %d lines)",
 					rawLines, tc.termHeight, rawLines-tc.termHeight)
+			}
+		})
+	}
+}
+
+// TestDetailScreen_SingleLongLine_Revealed tests with a single very long line
+// (e.g., JWT token, API key, base64 blob) that has NO newlines. This was the
+// root cause of the v0.10.3 overflow: viewportRender counts \n-delimited lines,
+// but a 5000-char single line wraps to ~63 visual lines at 80 columns.
+// The fix wraps long lines via wrapAndTruncate before passing to viewportRender.
+func TestDetailScreen_SingleLongLine_Revealed(t *testing.T) {
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+		valueLen   int
+	}{
+		{"5000 chars at 80x40", 40, 80, 5000},
+		{"10000 chars at 80x24", 24, 80, 10000},
+		{"2000 chars at 120x30", 30, 120, 2000},
+		{"500 chars at 80x40", 40, 80, 500},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			longValue := strings.Repeat("A", tc.valueLen)
+
+			entry := vault.SecretEntry{
+				Name:      "my-jwt-token",
+				Value:     longValue,
+				CreatedAt: "2025-01-01T00:00:00Z",
+				UpdatedAt: "2025-01-01T00:00:00Z",
+			}
+
+			m := Model{
+				width:       tc.termWidth,
+				height:      tc.termHeight,
+				screen:      screenDetail,
+				secrets:     []vault.SecretEntry{entry},
+				display:     []vault.SecretEntry{entry},
+				cursor:      0,
+				valueMasked: false,
+			}
+
+			rendered := m.viewDetailScreen()
+			rawLines := strings.Count(rendered, "\n") + 1
+
+			// Also measure visual lines (accounting for terminal wrapping).
+			visualLines := 0
+			for _, line := range strings.Split(rendered, "\n") {
+				plain := stripANSI(line)
+				w := len([]rune(plain))
+				if w <= tc.termWidth {
+					visualLines++
+				} else {
+					visualLines += (w + tc.termWidth - 1) / tc.termWidth
+				}
+			}
+
+			t.Logf("Detail screen (single %d-char line): raw=%d, visual=%d, terminal %dx%d",
+				tc.valueLen, rawLines, visualLines, tc.termWidth, tc.termHeight)
+
+			if rawLines > tc.termHeight {
+				t.Errorf("OVERFLOW (raw): %d lines exceeds terminal height %d",
+					rawLines, tc.termHeight)
+			}
+			if visualLines > tc.termHeight {
+				t.Errorf("OVERFLOW (visual): %d visual lines exceeds terminal height %d",
+					visualLines, tc.termHeight)
+			}
+		})
+	}
+}
+
+// TestDetailScreen_FullModelView_AllValueTypes tests the complete Model.View()
+// path for screenDetail with various value shapes: multi-line, single long line,
+// short value, and fields with large values.
+func TestDetailScreen_FullModelView_AllValueTypes(t *testing.T) {
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+		value      string
+		fields     map[string]string
+	}{
+		{
+			"multi-line PEM cert",
+			40, 80,
+			largeSecret(100),
+			nil,
+		},
+		{
+			"single long JWT token",
+			40, 80,
+			strings.Repeat("eyJhbGciOiJSUzI1NiJ9.", 200),
+			nil,
+		},
+		{
+			"short value with large field",
+			40, 80,
+			"short-password",
+			map[string]string{
+				"cert": strings.Repeat("MIIB", 1000),
+			},
+		},
+		{
+			"multiple large fields",
+			40, 80,
+			"",
+			map[string]string{
+				"private_key": largeSecret(50),
+				"public_key":  largeSecret(50),
+				"cert_chain":  strings.Repeat("Z", 3000),
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := vault.SecretEntry{
+				Name:      "test-secret",
+				Value:     tc.value,
+				Fields:    tc.fields,
+				CreatedAt: "2025-01-01T00:00:00Z",
+				UpdatedAt: "2025-01-01T00:00:00Z",
+			}
+
+			m := Model{
+				width:       tc.termWidth,
+				height:      tc.termHeight,
+				screen:      screenDetail,
+				secrets:     []vault.SecretEntry{entry},
+				display:     []vault.SecretEntry{entry},
+				cursor:      0,
+				valueMasked: false,
+			}
+
+			// Test through the full Model.View() path
+			rendered := m.View()
+			rawLines := strings.Count(rendered, "\n") + 1
+
+			t.Logf("%s: %d raw lines, terminal %dx%d", tc.name, rawLines, tc.termWidth, tc.termHeight)
+
+			if rawLines > tc.termHeight {
+				t.Errorf("OVERFLOW: Model.View() produces %d lines, exceeds terminal height %d",
+					rawLines, tc.termHeight)
+			}
+
+			// Also measure visual lines
+			visualLines := 0
+			for _, line := range strings.Split(rendered, "\n") {
+				plain := stripANSI(line)
+				w := len([]rune(plain))
+				if w <= tc.termWidth {
+					visualLines++
+				} else {
+					visualLines += (w + tc.termWidth - 1) / tc.termWidth
+				}
+			}
+
+			if visualLines > tc.termHeight {
+				t.Errorf("OVERFLOW (visual): %d visual lines exceeds terminal height %d",
+					visualLines, tc.termHeight)
 			}
 		})
 	}
