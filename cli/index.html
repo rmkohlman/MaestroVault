@@ -1,0 +1,1815 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A macOS-first, lightweight secrets manager for developers">
+      
+      
+        <meta name="author" content="Robert Kohlman">
+      
+      
+        <link rel="canonical" href="https://rmkohlman.github.io/MaestroVault/cli/">
+      
+      
+        <link rel="prev" href="../getting-started/">
+      
+      
+        <link rel="next" href="../tui/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>CLI Reference - MaestroVault</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cli-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="MaestroVault" class="md-header__button md-logo" aria-label="MaestroVault" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MaestroVault
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CLI Reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/rmkohlman/MaestroVault" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    rmkohlman/MaestroVault
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="MaestroVault" class="md-nav__button md-logo" aria-label="MaestroVault" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MaestroVault
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/rmkohlman/MaestroVault" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    rmkohlman/MaestroVault
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#global-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global Flags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav init
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-set-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav set &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-get-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav get &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav list
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-delete-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav delete &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-edit-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav edit &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-copy-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav copy &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-search-query" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav search &lt;query&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-generate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav generate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-env" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav env
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-exec-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav exec -- &lt;command&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-import-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav import &lt;file&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-destroy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav destroy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-tui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav tui
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-serve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav serve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav token
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="mav token">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#token-create" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        token create
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        token list
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-revoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        token revoke
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-touchid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav touchid
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="mav touchid">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#touchid-enable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        touchid enable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touchid-disable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        touchid disable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touchid-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        touchid status
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav version
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shell-completions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shell Completions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TUI Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    REST API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../client/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Go Client Library
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../touchid/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TouchID
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#global-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global Flags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav init
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-set-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav set &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-get-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav get &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav list
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-delete-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav delete &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-edit-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav edit &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-copy-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav copy &lt;name&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-search-query" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav search &lt;query&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-generate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav generate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-env" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav env
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-exec-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav exec -- &lt;command&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-import-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav import &lt;file&gt;
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-destroy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav destroy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-tui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav tui
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-serve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav serve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav token
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="mav token">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#token-create" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        token create
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        token list
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-revoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        token revoke
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-touchid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav touchid
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="mav touchid">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#touchid-enable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        touchid enable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touchid-disable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        touchid disable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touchid-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        touchid status
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mav-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mav version
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shell-completions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shell Completions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cli-reference">CLI Reference<a class="headerlink" href="#cli-reference" title="Permanent link">&para;</a></h1>
+<p>All commands support <code>--format json</code> (or <code>-o json</code>) for machine-readable output and <code>--no-color</code> to disable colored output. When stdout is not a TTY, JSON is used automatically.</p>
+<h2 id="global-flags">Global Flags<a class="headerlink" href="#global-flags" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Short</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--format</code></td>
+<td><code>-o</code></td>
+<td>Output format: <code>json</code>, <code>table</code> (default: auto-detect)</td>
+</tr>
+<tr>
+<td><code>--no-color</code></td>
+<td></td>
+<td>Disable colored output (also respects <code>NO_COLOR</code> env var)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-init"><code>mav init</code><a class="headerlink" href="#mav-init" title="Permanent link">&para;</a></h2>
+<p>Initialize a new vault.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mav<span class="w"> </span>init
+</span></code></pre></div>
+<p>Creates <code>~/.maestrovault/</code>, generates a master key, and stores it in the macOS Keychain. Fails if a vault already exists.</p>
+<hr />
+<h2 id="mav-set-name"><code>mav set &lt;name&gt;</code><a class="headerlink" href="#mav-set-name" title="Permanent link">&para;</a></h2>
+<p>Store or update a secret.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mav<span class="w"> </span><span class="nb">set</span><span class="w"> </span>db-password<span class="w"> </span>--value<span class="w"> </span><span class="s2">&quot;s3cret&quot;</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>mav<span class="w"> </span><span class="nb">set</span><span class="w"> </span>api-key<span class="w"> </span>--value<span class="w"> </span><span class="s2">&quot;sk-123&quot;</span><span class="w"> </span>--env<span class="w"> </span>prod<span class="w"> </span>--metadata<span class="w"> </span><span class="nv">service</span><span class="o">=</span>api
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mav<span class="w"> </span><span class="nb">set</span><span class="w"> </span>my-cert<span class="w"> </span>--from-file<span class="w"> </span>cert.pem<span class="w"> </span>--env<span class="w"> </span>prod
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;piped-value&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>mav<span class="w"> </span><span class="nb">set</span><span class="w"> </span>token-name
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>mav<span class="w"> </span><span class="nb">set</span><span class="w"> </span>db-creds<span class="w"> </span>--field<span class="w"> </span>host<span class="w"> </span>--value<span class="w"> </span><span class="s2">&quot;db.example.com&quot;</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>mav<span class="w"> </span><span class="nb">set</span><span class="w"> </span>db-creds<span class="w"> </span>--field<span class="w"> </span>port<span class="w"> </span>--value<span class="w"> </span><span class="s2">&quot;5432&quot;</span><span class="w"> </span>--env<span class="w"> </span>prod
+</span></code></pre></div>
+<p>On a TTY with no <code>--value</code>, <code>--from-file</code>, or <code>--generate</code> flag, <code>mav set</code> opens an interactive modal for entering the secret name, value, environment, and metadata.</p>
+<p>When <code>--from-file</code> is provided, the file contents are stored byte-for-byte (preserving newlines, whitespace, and binary content). This is ideal for PEM certificates, SSH keys, and multi-line config files.</p>
+<p>When <code>--field</code> is provided, stores a single encrypted field on the secret instead of setting the main value. The parent secret is created automatically if it doesn't exist.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--value</code>, <code>-v</code></td>
+<td>Secret value (reads from stdin if omitted)</td>
+</tr>
+<tr>
+<td><code>--from-file</code>, <code>-f</code></td>
+<td>Read secret value from a file (preserves content byte-for-byte)</td>
+</tr>
+<tr>
+<td><code>--field</code></td>
+<td>Set a named field instead of the main value</td>
+</tr>
+<tr>
+<td><code>--metadata</code>, <code>-m</code></td>
+<td>Metadata as <code>key=value</code> (repeatable)</td>
+</tr>
+<tr>
+<td><code>--env</code>, <code>-e</code></td>
+<td>Environment (e.g. dev, staging, prod)</td>
+</tr>
+<tr>
+<td><code>--generate</code>, <code>-g</code></td>
+<td>Auto-generate a random password as the value</td>
+</tr>
+<tr>
+<td><code>--length</code></td>
+<td>Generated password length (with <code>--generate</code>, default: 32)</td>
+</tr>
+<tr>
+<td><code>--symbols</code></td>
+<td>Include symbols in generated password (with <code>--generate</code>)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-get-name"><code>mav get &lt;name&gt;</code><a class="headerlink" href="#mav-get-name" title="Permanent link">&para;</a></h2>
+<p>Retrieve and decrypt a secret.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mav<span class="w"> </span>get<span class="w"> </span>db-password
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>mav<span class="w"> </span>get<span class="w"> </span>db-password<span class="w"> </span>--env<span class="w"> </span>prod
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>mav<span class="w"> </span>get<span class="w"> </span>db-password<span class="w"> </span>-o<span class="w"> </span>json
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>mav<span class="w"> </span>get<span class="w"> </span>db-creds<span class="w"> </span>--field<span class="w"> </span>host
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>mav<span class="w"> </span>get<span class="w"> </span>db-creds<span class="w"> </span>--field<span class="w"> </span>host<span class="w"> </span>--quiet
+</span></code></pre></div>
+<p>On a TTY (without <code>-q</code>, <code>-c</code>, or <code>--print</code>), <code>mav get</code> opens an interactive modal showing the secret with the value masked. From the modal you can peek, copy, edit, or quit.</p>
+<p>When <code>--field</code> is provided, retrieves a single named field from the secret instead of the main value. Supports <code>--quiet</code>, <code>--clip</code>, and <code>--print</code> flags.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--field</code></td>
+<td>Retrieve a named field instead of the main value</td>
+</tr>
+<tr>
+<td><code>--quiet</code>, <code>-q</code></td>
+<td>Print only the value (for piping)</td>
+</tr>
+<tr>
+<td><code>--clip</code>, <code>-c</code></td>
+<td>Copy value to clipboard (auto-clears in 45s)</td>
+</tr>
+<tr>
+<td><code>--print</code>, <code>-p</code></td>
+<td>Print the secret in plaintext (legacy behavior)</td>
+</tr>
+<tr>
+<td><code>--env</code>, <code>-e</code></td>
+<td>Environment (e.g. dev, staging, prod)</td>
+</tr>
+</tbody>
+</table>
+<p>When stdout is not a TTY (piped), the raw value is printed automatically.</p>
+<p>Shell completion is available for secret names.</p>
+<hr />
+<h2 id="mav-list"><code>mav list</code><a class="headerlink" href="#mav-list" title="Permanent link">&para;</a></h2>
+<p>List all secrets (values are not shown).</p>
+<p><strong>Alias:</strong> <code>mav ls</code></p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>mav<span class="w"> </span>list
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>mav<span class="w"> </span>list<span class="w"> </span>--env<span class="w"> </span>prod
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>mav<span class="w"> </span>list<span class="w"> </span>--metadata-key<span class="w"> </span>service<span class="w"> </span>--metadata-value<span class="w"> </span>postgres
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>mav<span class="w"> </span>list<span class="w"> </span>-o<span class="w"> </span>json
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--filter</code>, <code>-f</code></td>
+<td>Filter secrets by name or metadata content</td>
+</tr>
+<tr>
+<td><code>--metadata-key</code></td>
+<td>Filter by metadata key</td>
+</tr>
+<tr>
+<td><code>--metadata-value</code></td>
+<td>Filter by metadata value (used with <code>--metadata-key</code>)</td>
+</tr>
+<tr>
+<td><code>--env</code>, <code>-e</code></td>
+<td>Environment (e.g. dev, staging, prod)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-delete-name"><code>mav delete &lt;name&gt;</code><a class="headerlink" href="#mav-delete-name" title="Permanent link">&para;</a></h2>
+<p>Delete a secret. Requires confirmation unless <code>--force</code> is used.</p>
+<p><strong>Alias:</strong> <code>mav rm</code></p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>mav<span class="w"> </span>delete<span class="w"> </span>old-key
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>mav<span class="w"> </span>delete<span class="w"> </span>old-key<span class="w"> </span>--force
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>mav<span class="w"> </span>delete<span class="w"> </span>db-creds<span class="w"> </span>--field<span class="w"> </span>host
+</span></code></pre></div>
+<p>When <code>--field</code> is provided, deletes a single named field from the secret instead of deleting the entire secret.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--field</code></td>
+<td>Delete a named field instead of the entire secret</td>
+</tr>
+<tr>
+<td><code>--force</code>, <code>-f</code></td>
+<td>Skip confirmation prompt</td>
+</tr>
+<tr>
+<td><code>--env</code>, <code>-e</code></td>
+<td>Environment (e.g. dev, staging, prod)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-edit-name"><code>mav edit &lt;name&gt;</code><a class="headerlink" href="#mav-edit-name" title="Permanent link">&para;</a></h2>
+<p>Update an existing secret's value or metadata.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>mav<span class="w"> </span>edit<span class="w"> </span>db-password<span class="w"> </span>--value<span class="w"> </span><span class="s2">&quot;new-password&quot;</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>mav<span class="w"> </span>edit<span class="w"> </span>api-key<span class="w"> </span>--metadata<span class="w"> </span><span class="nv">env</span><span class="o">=</span>staging
+</span></code></pre></div>
+<p>On a TTY with no flags, <code>mav edit</code> opens an interactive modal pre-populated with the secret's current values for inline editing.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--value</code>, <code>-v</code></td>
+<td>New value (keeps existing if omitted)</td>
+</tr>
+<tr>
+<td><code>--metadata</code>, <code>-m</code></td>
+<td>New metadata as <code>key=value</code> (replaces all metadata; keeps existing if omitted)</td>
+</tr>
+<tr>
+<td><code>--env</code>, <code>-e</code></td>
+<td>Environment (e.g. dev, staging, prod)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-copy-name"><code>mav copy &lt;name&gt;</code><a class="headerlink" href="#mav-copy-name" title="Permanent link">&para;</a></h2>
+<p>Copy a secret's value to the system clipboard.</p>
+<p><strong>Alias:</strong> <code>mav cp</code></p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>mav<span class="w"> </span>copy<span class="w"> </span>db-password
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>mav<span class="w"> </span>copy<span class="w"> </span>db-password<span class="w"> </span>--clear<span class="w"> </span>10s
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>mav<span class="w"> </span>copy<span class="w"> </span>db-creds<span class="w"> </span>--field<span class="w"> </span>host
+</span></code></pre></div>
+<p>When <code>--field</code> is provided, copies the named field value instead of the main secret value.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--field</code></td>
+<td>Copy a named field value instead of the main value</td>
+</tr>
+<tr>
+<td><code>--clear</code>, <code>-c</code></td>
+<td>Auto-clear clipboard after duration (default: <code>45s</code>)</td>
+</tr>
+<tr>
+<td><code>--env</code>, <code>-e</code></td>
+<td>Environment (e.g. dev, staging, prod)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-search-query"><code>mav search &lt;query&gt;</code><a class="headerlink" href="#mav-search-query" title="Permanent link">&para;</a></h2>
+<p>Search secrets by name, environment, and metadata.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>mav<span class="w"> </span>search<span class="w"> </span>postgres
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>mav<span class="w"> </span>search<span class="w"> </span>prod<span class="w"> </span>-o<span class="w"> </span>json
+</span></code></pre></div>
+<hr />
+<h2 id="mav-generate"><code>mav generate</code><a class="headerlink" href="#mav-generate" title="Permanent link">&para;</a></h2>
+<p>Generate a random password.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>mav<span class="w"> </span>generate
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>mav<span class="w"> </span>generate<span class="w"> </span>--name<span class="w"> </span>wifi<span class="w"> </span>--length<span class="w"> </span><span class="m">24</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>mav<span class="w"> </span>generate<span class="w"> </span>--no-symbols<span class="w"> </span>--no-uppercase
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--name</code>, <code>-n</code></td>
+<td>Store the generated password as a secret</td>
+</tr>
+<tr>
+<td><code>--length</code></td>
+<td>Password length (default: 32)</td>
+</tr>
+<tr>
+<td><code>--no-uppercase</code></td>
+<td>Exclude uppercase letters</td>
+</tr>
+<tr>
+<td><code>--no-lowercase</code></td>
+<td>Exclude lowercase letters</td>
+</tr>
+<tr>
+<td><code>--no-digits</code></td>
+<td>Exclude digits</td>
+</tr>
+<tr>
+<td><code>--no-symbols</code></td>
+<td>Exclude symbols</td>
+</tr>
+<tr>
+<td><code>--metadata</code>, <code>-m</code></td>
+<td>Metadata for stored secret (with <code>--name</code>, repeatable)</td>
+</tr>
+<tr>
+<td><code>--env</code>, <code>-e</code></td>
+<td>Environment (e.g. dev, staging, prod)</td>
+</tr>
+<tr>
+<td><code>--clip</code>, <code>-c</code></td>
+<td>Copy to clipboard</td>
+</tr>
+<tr>
+<td><code>--passphrase</code></td>
+<td>Generate a passphrase instead of a password</td>
+</tr>
+<tr>
+<td><code>--words</code></td>
+<td>Number of words in passphrase (with <code>--passphrase</code>, default: 5)</td>
+</tr>
+<tr>
+<td><code>--delimiter</code></td>
+<td>Word delimiter for passphrase (with <code>--passphrase</code>, default: <code>-</code>)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-env"><code>mav env</code><a class="headerlink" href="#mav-env" title="Permanent link">&para;</a></h2>
+<p>Print secrets as shell export statements.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>mav<span class="w"> </span>env
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nb">eval</span><span class="w"> </span><span class="k">$(</span>mav<span class="w"> </span>env<span class="k">)</span>
+</span></code></pre></div>
+<p>Secret names are converted to environment variable format: uppercase, dashes/dots/spaces become underscores. For example, <code>db-password</code> becomes <code>DB_PASSWORD</code>.</p>
+<hr />
+<h2 id="mav-exec-command"><code>mav exec -- &lt;command&gt;</code><a class="headerlink" href="#mav-exec-command" title="Permanent link">&para;</a></h2>
+<p>Run a command with all secrets injected as environment variables.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>mav<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>env
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>mav<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>node<span class="w"> </span>server.js
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>mav<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>up
+</span></code></pre></div>
+<hr />
+<h2 id="mav-export"><code>mav export</code><a class="headerlink" href="#mav-export" title="Permanent link">&para;</a></h2>
+<p>Export all secrets to stdout (plaintext).</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>mav<span class="w"> </span><span class="nb">export</span><span class="w"> </span>&gt;<span class="w"> </span>backup.json
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>mav<span class="w"> </span><span class="nb">export</span><span class="w"> </span>--format<span class="w"> </span>env<span class="w"> </span>&gt;<span class="w"> </span>.env
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--format</code></td>
+<td>Export format: <code>json</code> (default), <code>env</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Export files contain plaintext secrets. Delete them after use.</p>
+</div>
+<hr />
+<h2 id="mav-import-file"><code>mav import &lt;file&gt;</code><a class="headerlink" href="#mav-import-file" title="Permanent link">&para;</a></h2>
+<p>Import secrets from a file.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>mav<span class="w"> </span>import<span class="w"> </span>backup.json
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>mav<span class="w"> </span>import<span class="w"> </span>--format<span class="w"> </span>env<span class="w"> </span>.env
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>mav<span class="w"> </span>import<span class="w"> </span>backup.json<span class="w"> </span>--force
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--format</code></td>
+<td>File format: <code>json</code> (default), <code>env</code></td>
+</tr>
+<tr>
+<td><code>--force</code>, <code>-f</code></td>
+<td>Skip confirmation prompt</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-destroy"><code>mav destroy</code><a class="headerlink" href="#mav-destroy" title="Permanent link">&para;</a></h2>
+<p>Permanently destroy the vault, database, and master key.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>mav<span class="w"> </span>destroy
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>mav<span class="w"> </span>destroy<span class="w"> </span>--force
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--force</code>, <code>-f</code></td>
+<td>Skip confirmation prompt</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition danger">
+<p class="admonition-title">Danger</p>
+<p>This is irreversible. All secrets and the master key are permanently deleted.</p>
+</div>
+<hr />
+<h2 id="mav-tui"><code>mav tui</code><a class="headerlink" href="#mav-tui" title="Permanent link">&para;</a></h2>
+<p>Launch the interactive terminal UI.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>mav<span class="w"> </span>tui
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>mav<span class="w"> </span>tui<span class="w"> </span>--vim
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--vim</code></td>
+<td>Enable vim keybinding modes (Normal/Visual)</td>
+</tr>
+</tbody>
+</table>
+<p>See the <a href="../tui/">TUI Guide</a> for keyboard shortcuts.</p>
+<hr />
+<h2 id="mav-serve"><code>mav serve</code><a class="headerlink" href="#mav-serve" title="Permanent link">&para;</a></h2>
+<p>Start the REST API server on a Unix domain socket.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>mav<span class="w"> </span>serve
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>mav<span class="w"> </span>serve<span class="w"> </span>--socket<span class="w"> </span>/tmp/mav.sock
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>mav<span class="w"> </span>serve<span class="w"> </span>--no-touchid
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--socket</code></td>
+<td>Custom socket path (default: <code>~/.maestrovault/maestrovault.sock</code>)</td>
+</tr>
+<tr>
+<td><code>--no-touchid</code></td>
+<td>Skip TouchID authentication at startup (for automation)</td>
+</tr>
+</tbody>
+</table>
+<p>See the <a href="../api/">REST API reference</a> for endpoints.</p>
+<hr />
+<h2 id="mav-token"><code>mav token</code><a class="headerlink" href="#mav-token" title="Permanent link">&para;</a></h2>
+<p>Manage API tokens for the REST API server.</p>
+<h3 id="token-create"><code>token create</code><a class="headerlink" href="#token-create" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>mav<span class="w"> </span>token<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span><span class="s2">&quot;ci-read&quot;</span><span class="w"> </span>--scope<span class="w"> </span><span class="nb">read</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>mav<span class="w"> </span>token<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span><span class="s2">&quot;deploy&quot;</span><span class="w"> </span>--scope<span class="w"> </span>read,write<span class="w"> </span>--expires<span class="w"> </span>24h
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>mav<span class="w"> </span>token<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span><span class="s2">&quot;admin&quot;</span><span class="w"> </span>--scope<span class="w"> </span>admin
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--name</code></td>
+<td>Token name (required)</td>
+</tr>
+<tr>
+<td><code>--scope</code></td>
+<td>Scopes: <code>read</code>, <code>write</code>, <code>generate</code>, <code>admin</code> (required, comma-separated)</td>
+</tr>
+<tr>
+<td><code>--expires</code></td>
+<td>Expiry duration, e.g. <code>24h</code>, <code>720h</code> (default: no expiry)</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The plaintext token is shown only once at creation time. Save it somewhere safe.</p>
+</div>
+<h3 id="token-list"><code>token list</code><a class="headerlink" href="#token-list" title="Permanent link">&para;</a></h3>
+<p><strong>Alias:</strong> <code>mav token ls</code></p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>mav<span class="w"> </span>token<span class="w"> </span>list
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>mav<span class="w"> </span>token<span class="w"> </span>list<span class="w"> </span>-o<span class="w"> </span>json
+</span></code></pre></div>
+<h3 id="token-revoke"><code>token revoke</code><a class="headerlink" href="#token-revoke" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>mav<span class="w"> </span>token<span class="w"> </span>revoke<span class="w"> </span>&lt;id&gt;
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>mav<span class="w"> </span>token<span class="w"> </span>revoke<span class="w"> </span>--all
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--all</code></td>
+<td>Revoke all tokens</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="mav-touchid"><code>mav touchid</code><a class="headerlink" href="#mav-touchid" title="Permanent link">&para;</a></h2>
+<p>Manage TouchID biometric authentication.</p>
+<h3 id="touchid-enable"><code>touchid enable</code><a class="headerlink" href="#touchid-enable" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>mav<span class="w"> </span>touchid<span class="w"> </span><span class="nb">enable</span>
+</span></code></pre></div>
+<p>Checks hardware availability, performs a verification prompt, then saves the setting.</p>
+<h3 id="touchid-disable"><code>touchid disable</code><a class="headerlink" href="#touchid-disable" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>mav<span class="w"> </span>touchid<span class="w"> </span>disable
+</span></code></pre></div>
+<p>Requires TouchID authentication to disable (prevents unauthorized disabling).</p>
+<h3 id="touchid-status"><code>touchid status</code><a class="headerlink" href="#touchid-status" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>mav<span class="w"> </span>touchid<span class="w"> </span>status
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>mav<span class="w"> </span>touchid<span class="w"> </span>status<span class="w"> </span>-o<span class="w"> </span>json
+</span></code></pre></div>
+<hr />
+<h2 id="mav-version"><code>mav version</code><a class="headerlink" href="#mav-version" title="Permanent link">&para;</a></h2>
+<p>Print build version, commit, date, Go version, and OS/arch.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>mav<span class="w"> </span>version
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>mav<span class="w"> </span>version<span class="w"> </span>-o<span class="w"> </span>json
+</span></code></pre></div>
+<hr />
+<h2 id="shell-completions">Shell Completions<a class="headerlink" href="#shell-completions" title="Permanent link">&para;</a></h2>
+<p>MaestroVault supports shell completions for Bash, Zsh, Fish, and PowerShell via Cobra's built-in completion system:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># Bash</span>
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>mav<span class="w"> </span>completion<span class="w"> </span>bash<span class="w"> </span>&gt;<span class="w"> </span>/usr/local/etc/bash_completion.d/mav
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="c1"># Zsh</span>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>mav<span class="w"> </span>completion<span class="w"> </span>zsh<span class="w"> </span>&gt;<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">fpath</span><span class="p">[1]</span><span class="si">}</span><span class="s2">/_mav&quot;</span>
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="c1"># Fish</span>
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>mav<span class="w"> </span>completion<span class="w"> </span>fish<span class="w"> </span>&gt;<span class="w"> </span>~/.config/fish/completions/mav.fish
+</span></code></pre></div>
+<p>Secret names are completed dynamically -- press Tab after <code>get</code>, <code>set</code>, <code>delete</code>, <code>edit</code>, or <code>copy</code> to see available names.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/rmkohlman/MaestroVault" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.expand", "navigation.top", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
