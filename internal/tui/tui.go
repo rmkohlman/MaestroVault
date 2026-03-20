@@ -146,16 +146,6 @@ func (g *genState) regenerate() {
 	g.preview = pw
 }
 
-func (g *genState) opts() crypto.GenerateOpts {
-	return crypto.GenerateOpts{
-		Length:    g.length,
-		Uppercase: g.uppercase,
-		Lowercase: g.lowercase,
-		Digits:    g.digits,
-		Symbols:   g.symbols,
-	}
-}
-
 // ── Settings overlay ──────────────────────────────────────────
 
 const (
@@ -316,15 +306,6 @@ func fetchForEdit(v vault.Vault, name, env string) tea.Cmd {
 			return errMsg{err}
 		}
 		return editDetailMsg{entry}
-	}
-}
-
-func setSecret(v vault.Vault, name, env, value string, metadata map[string]any) tea.Cmd {
-	return func() tea.Msg {
-		if err := v.Set(context.Background(), name, env, value, metadata); err != nil {
-			return errMsg{err}
-		}
-		return statusMsg{fmt.Sprintf("Secret %q stored.", name)}
 	}
 }
 

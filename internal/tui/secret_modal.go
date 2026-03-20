@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rmkohlman/MaestroVault/internal/clipboard"
@@ -138,6 +139,12 @@ type SecretModal struct {
 	valueArea   textarea.Model
 	useTextarea bool // true when value field uses textarea instead of textinput
 
+	// Viewport for view-mode scrollable content and edit-mode form scrolling.
+	// In view mode, all body content is rendered into this viewport so the
+	// modal never exceeds terminal bounds and scrolling is handled natively
+	// by the Bubble Tea viewport component.
+	viewVP viewport.Model
+
 	// Full view overlay (view mode).
 	showFullView    bool
 	fullViewContent string
@@ -165,6 +172,7 @@ func NewSecretModalView(entry *vault.SecretEntry, v vault.Vault) SecretModal {
 		viewMasks:   masks,
 	}
 	m.initInputs()
+	m.initViewport()
 	return m
 }
 
@@ -178,6 +186,7 @@ func NewSecretModalEdit(entry *vault.SecretEntry, v vault.Vault) SecretModal {
 		origEnv:  entry.Environment,
 	}
 	m.initInputs()
+	m.initViewport()
 	m.nameInput.SetValue(entry.Name)
 	m.envInput.SetValue(entry.Environment)
 	m.valueInput.SetValue(entry.Value)
@@ -201,6 +210,7 @@ func NewSecretModalAdd(v vault.Vault) SecretModal {
 		mode:  modalAdd,
 	}
 	m.initInputs()
+	m.initViewport()
 	m.focusField = fieldName
 	m.focusCurrentField()
 	return m
@@ -228,6 +238,24 @@ func (m *SecretModal) initInputs() {
 	m.envInput = ei
 	m.valueInput = vi
 	m.metadataInput = mi
+}
+
+// initViewport creates the viewport for view-mode scrolling with all
+// built-in keybindings disabled (we handle navigation ourselves).
+func (m *SecretModal) initViewport() {
+	vp := viewport.New(m.modalWidth(), m.viewportHeight())
+	// Disable all built-in key bindings — view mode uses j/k for item
+	// navigation and we auto-scroll the viewport to the focused item.
+	// Edit mode doesn't use the viewport for key input at all.
+	vp.KeyMap.Up.Unbind()
+	vp.KeyMap.Down.Unbind()
+	vp.KeyMap.PageUp.Unbind()
+	vp.KeyMap.PageDown.Unbind()
+	vp.KeyMap.HalfPageUp.Unbind()
+	vp.KeyMap.HalfPageDown.Unbind()
+	vp.KeyMap.Left.Unbind()
+	vp.KeyMap.Right.Unbind()
+	m.viewVP = vp
 }
 
 // initValueTextarea switches the value field to a multi-line textarea,
@@ -319,6 +347,9 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Resize viewport for view mode.
+		m.viewVP.Width = m.modalWidth()
+		m.viewVP.Height = m.viewportHeight()
 		// Resize textarea to fit new terminal dimensions.
 		if m.useTextarea {
 			w := m.modalWidth() - 16
@@ -845,17 +876,6 @@ func syncFields(ctx context.Context, v vault.Vault, name, env string, desired ma
 	return nil
 }
 
-func (m SecretModal) copyValue() tea.Cmd {
-	value := m.entry.Value
-	name := m.entry.Name
-	return func() tea.Msg {
-		if _, err := clipboard.CopyWithClear(value, 45*time.Second); err != nil {
-			return secretModalResultMsg{toast: fmt.Sprintf("clipboard: %s", err), kind: "error"}
-		}
-		return toastMsg{text: fmt.Sprintf("Copied %q to clipboard (clears in 45s)", name), kind: "success"}
-	}
-}
-
 func (m SecretModal) closeModal() (tea.Model, tea.Cmd) {
 	m.blurAll()
 	m.valueRevealed = false
@@ -899,17 +919,19 @@ func (m SecretModal) View() string {
 	return ""
 }
 
-func (m SecretModal) viewModeView() string {
-	var b strings.Builder
+func (m *SecretModal) viewModeView() string {
 	w := m.modalWidth()
+
+	// ── Build scrollable body content ──
+	var body strings.Builder
 
 	// Title.
 	title := " " + m.entry.Name
 	if m.entry.Environment != "" {
 		title += " " + EnvBadgeStyle.Render("["+m.entry.Environment+"]")
 	}
-	b.WriteString(TitleStyle.Render(title))
-	b.WriteString("\n\n")
+	body.WriteString(TitleStyle.Render(title))
+	body.WriteString("\n\n")
 
 	// Build navigable items: value (if present) + fields sorted by key.
 	hasValue := m.entry.Value != ""
@@ -923,23 +945,23 @@ func (m SecretModal) viewModeView() string {
 		}
 		masked, _ := m.viewMasks[itemIdx]
 		if masked {
-			b.WriteString(cursor + MutedStyle.Render("Value       "))
-			b.WriteString(MaskedValueStyle.Render(maskValue(m.entry.Value)))
-			b.WriteString("\n")
+			body.WriteString(cursor + MutedStyle.Render("Value       "))
+			body.WriteString(MaskedValueStyle.Render(maskValue(m.entry.Value)))
+			body.WriteString("\n")
 		} else if isLargeValue(m.entry.Value) {
-			b.WriteString(cursor + MutedStyle.Render("Value"))
-			b.WriteString("\n")
+			body.WriteString(cursor + MutedStyle.Render("Value"))
+			body.WriteString("\n")
 			visible, total := wrapAndTruncate(m.entry.Value, w-4, 6)
 			for _, line := range strings.Split(visible, "\n") {
-				b.WriteString("    " + SecretValueStyle.Render(line) + "\n")
+				body.WriteString("    " + SecretValueStyle.Render(line) + "\n")
 			}
 			if total > 6 {
-				b.WriteString("    " + MutedStyle.Render(fmt.Sprintf("(%d more lines — f full view · c copy)", total-6)) + "\n")
+				body.WriteString("    " + MutedStyle.Render(fmt.Sprintf("(%d more lines — f full view · c copy)", total-6)) + "\n")
 			}
 		} else {
-			b.WriteString(cursor + MutedStyle.Render("Value       "))
-			b.WriteString(SecretValueStyle.Render(m.entry.Value))
-			b.WriteString("\n")
+			body.WriteString(cursor + MutedStyle.Render("Value       "))
+			body.WriteString(SecretValueStyle.Render(m.entry.Value))
+			body.WriteString("\n")
 		}
 		itemIdx++
 	}
@@ -947,7 +969,7 @@ func (m SecretModal) viewModeView() string {
 	// Fields.
 	if len(m.entry.Fields) > 0 {
 		if hasValue {
-			b.WriteString("\n")
+			body.WriteString("\n")
 		}
 		keys := sortedFieldKeys(m.entry.Fields)
 		for _, key := range keys {
@@ -959,69 +981,87 @@ func (m SecretModal) viewModeView() string {
 			masked, _ := m.viewMasks[itemIdx]
 			fieldVal := m.entry.Fields[key]
 			if masked {
-				b.WriteString(cursor + FieldKeyStyle.Render(label) + " ")
-				b.WriteString(MaskedValueStyle.Render(maskValue(fieldVal)))
-				b.WriteString("\n")
+				body.WriteString(cursor + FieldKeyStyle.Render(label) + " ")
+				body.WriteString(MaskedValueStyle.Render(maskValue(fieldVal)))
+				body.WriteString("\n")
 			} else if isLargeValue(fieldVal) {
-				b.WriteString(cursor + FieldKeyStyle.Render(key))
-				b.WriteString("\n")
+				body.WriteString(cursor + FieldKeyStyle.Render(key))
+				body.WriteString("\n")
 				visible, total := wrapAndTruncate(fieldVal, w-4, 6)
 				for _, line := range strings.Split(visible, "\n") {
-					b.WriteString("    " + SecretValueStyle.Render(line) + "\n")
+					body.WriteString("    " + SecretValueStyle.Render(line) + "\n")
 				}
 				if total > 6 {
-					b.WriteString("    " + MutedStyle.Render(fmt.Sprintf("(%d more lines — f full view · c copy)", total-6)) + "\n")
+					body.WriteString("    " + MutedStyle.Render(fmt.Sprintf("(%d more lines — f full view · c copy)", total-6)) + "\n")
 				}
 			} else {
-				b.WriteString(cursor + FieldKeyStyle.Render(label) + " ")
-				b.WriteString(SecretValueStyle.Render(fieldVal))
-				b.WriteString("\n")
+				body.WriteString(cursor + FieldKeyStyle.Render(label) + " ")
+				body.WriteString(SecretValueStyle.Render(fieldVal))
+				body.WriteString("\n")
 			}
 			itemIdx++
 		}
 	}
 
 	// Timestamps.
-	b.WriteString("\n")
+	body.WriteString("\n")
 	if m.entry.CreatedAt != "" {
 		created := m.entry.CreatedAt
 		if len(created) > 16 {
 			created = created[:16]
 		}
-		b.WriteString("  " + MutedStyle.Render("Created     ") + created)
-		b.WriteString("\n")
+		body.WriteString("  " + MutedStyle.Render("Created     ") + created)
+		body.WriteString("\n")
 	}
 	if m.entry.UpdatedAt != "" {
 		updated := m.entry.UpdatedAt
 		if len(updated) > 16 {
 			updated = updated[:16]
 		}
-		b.WriteString("  " + MutedStyle.Render("Updated     ") + updated)
-		b.WriteString("\n")
+		body.WriteString("  " + MutedStyle.Render("Updated     ") + updated)
+		body.WriteString("\n")
 	}
 
 	// Metadata.
 	if len(m.entry.Metadata) > 0 {
-		b.WriteString("  " + MutedStyle.Render("Metadata    ") + formatMetadataInline(m.entry.Metadata))
-		b.WriteString("\n")
+		body.WriteString("  " + MutedStyle.Render("Metadata    ") + formatMetadataInline(m.entry.Metadata))
+		body.WriteString("\n")
 	}
-
-	b.WriteString("\n")
 
 	// Toast.
 	if m.toast != "" {
+		body.WriteString("\n")
 		switch m.toastKind {
 		case "success":
-			b.WriteString("  " + ToastSuccessStyle.Render(" "+m.toast+" "))
+			body.WriteString("  " + ToastSuccessStyle.Render(" "+m.toast+" "))
 		case "error":
-			b.WriteString("  " + ToastErrorStyle.Render(" "+m.toast+" "))
+			body.WriteString("  " + ToastErrorStyle.Render(" "+m.toast+" "))
 		default:
-			b.WriteString("  " + ToastInfoStyle.Render(" "+m.toast+" "))
+			body.WriteString("  " + ToastInfoStyle.Render(" "+m.toast+" "))
 		}
-		b.WriteString("\n")
+		body.WriteString("\n")
 	}
 
-	// Help bar.
+	// ── Set viewport content and auto-scroll to focused item ──
+	bodyContent := body.String()
+	m.viewVP.Width = w
+	m.viewVP.Height = m.viewportHeight()
+	m.viewVP.SetContent(bodyContent)
+
+	// Auto-scroll to keep the focused item visible.
+	focusLine := m.estimateViewFocusLine()
+	if focusLine < m.viewVP.YOffset {
+		m.viewVP.SetYOffset(focusLine)
+	} else if focusLine >= m.viewVP.YOffset+m.viewVP.Height {
+		m.viewVP.SetYOffset(focusLine - m.viewVP.Height + 1)
+	}
+
+	// ── Assemble final modal: viewport + help bar ──
+	var final strings.Builder
+	final.WriteString(m.viewVP.View())
+	final.WriteString("\n")
+
+	// Help bar (always visible, outside the viewport).
 	var helpParts []string
 	helpParts = append(helpParts,
 		HelpKeyStyle.Render("↑/↓")+" "+HelpDescStyle.Render("navigate"),
@@ -1038,21 +1078,15 @@ func (m SecretModal) viewModeView() string {
 		HelpKeyStyle.Render("e")+" "+HelpDescStyle.Render("edit"),
 		HelpKeyStyle.Render("q")+" "+HelpDescStyle.Render("close"),
 	)
-	b.WriteString("  " + strings.Join(helpParts, MutedStyle.Render("  ·  ")))
+	final.WriteString("  " + strings.Join(helpParts, MutedStyle.Render("  ·  ")))
 
-	content := b.String()
+	content := final.String()
 
-	// Constrain to terminal: use viewportRender with auto-scroll to focused item.
-	maxVisible := m.modalHeight()
-	content, _ = viewportRender(content, maxVisible, 0, m.estimateViewFocusLine())
-
-	// Safety cap: MaxHeight prevents the rendered modal from ever
-	// exceeding the terminal, even if the content math is slightly off.
-	maxH := m.height
-	if maxH < 16 {
-		maxH = 16
-	}
-	modal := ModalStyle.Width(w).MaxHeight(maxH).Render(content)
+	// The modal frame adds border(2) + padding(2) = 4 rows.
+	// viewport.Height + help_bar(1) + separator_newline(1) = viewport.Height + 2
+	// Total rendered = viewport.Height + 2 + 4 = viewport.Height + 6
+	// Since viewportHeight = m.height - 6, total = m.height. Exactly fits.
+	modal := ModalStyle.Width(w).Render(content)
 
 	if m.standalone {
 		return m.centerStandalone(modal)
@@ -1099,12 +1133,13 @@ func (m SecretModal) editModeView(titleText string) string {
 			extra := MutedStyle.Render(" (multi-line)")
 			b.WriteString(cursor + labelStyle.Render(f.label) + extra)
 			b.WriteString("\n")
-			// Indent the textarea view. Trim trailing newline to avoid
-			// an off-by-one in line count.
+			// Render textarea as a single block with left margin.
+			// DO NOT split by \n — that corrupts ANSI escape sequences
+			// spanning multiple lines in the textarea's rendered output.
 			taView := strings.TrimRight(m.valueArea.View(), "\n")
-			for _, line := range strings.Split(taView, "\n") {
-				b.WriteString("    " + line + "\n")
-			}
+			indented := lipgloss.NewStyle().MarginLeft(4).Render(taView)
+			b.WriteString(indented)
+			b.WriteString("\n")
 			continue
 		}
 		extra := ""
@@ -1195,11 +1230,22 @@ func (m SecretModal) editModeView(titleText string) string {
 	// The textarea has built-in scrolling and textareaHeight() is
 	// calculated to fit within the terminal. Apply a lipgloss MaxHeight
 	// safety cap to guarantee we never overflow even if the line math
-	// is slightly off.
-	maxH := m.height
+	// is slightly off. Account for modal frame: border (2) + padding (2) = 4.
+	maxH := m.height - 4
 	if maxH < 16 {
 		maxH = 16
 	}
+
+	// For forms WITHOUT textarea, constrain content via viewportRender
+	// to handle cases where many field pairs overflow the terminal.
+	if !m.useTextarea {
+		maxContent := maxH
+		contentLines := strings.Count(content, "\n") + 1
+		if contentLines > maxContent {
+			content, _ = viewportRender(content, maxContent, 0, m.estimateEditFocusLine())
+		}
+	}
+
 	modal := ModalStyle.Width(w).MaxHeight(maxH).Render(content)
 
 	if m.standalone {
@@ -1341,7 +1387,14 @@ func (m SecretModal) fullViewView() string {
 	b.WriteString("  " + strings.Join(helpParts, MutedStyle.Render("  ·  ")))
 
 	content := b.String()
-	modal := ModalStyle.Width(contentWidth).Render(content)
+	// Safety cap: ensure the rendered modal never exceeds terminal height.
+	// oh accounts for ~80% terminal but includes the frame; MaxHeight caps the
+	// entire rendered output at the terminal height.
+	maxH := th
+	if maxH < 12 {
+		maxH = 12
+	}
+	modal := ModalStyle.Width(contentWidth).MaxHeight(maxH).Render(content)
 
 	if m.standalone {
 		return m.centerStandalone(modal)
@@ -1377,13 +1430,18 @@ func (m SecretModal) modalWidth() int {
 	return w
 }
 
-// modalHeight returns the maximum content height for the modal, scaled to the
-// terminal height. The modal border + padding consume ~4 rows, so we subtract
-// that and leave a small margin.
-func (m SecretModal) modalHeight() int {
-	h := m.height - 4 // border (2) + padding (1*2)
-	if h < 12 {
-		h = 12
+// viewportHeight returns the height available for the viewport in view mode.
+// This accounts for the modal frame (border + padding = 4 rows) and the
+// content that sits OUTSIDE the viewport (help bar = 1 row, blank before
+// help = 1 row).
+func (m SecretModal) viewportHeight() int {
+	// Modal frame: border(2) + padding(2) = 4
+	// Help bar at bottom: 1
+	// Newline separator: 1
+	// Total non-viewport overhead: 6
+	h := m.height - 6
+	if h < 3 {
+		h = 3
 	}
 	return h
 }
@@ -1412,10 +1470,9 @@ func (m SecretModal) textareaHeight() int {
 		overhead += 2
 	}
 
-	// modalHeight() already accounts for border + padding (4 rows).
-	// But we also need to leave a small margin for the centering overlay
-	// and any rounding differences: subtract 2 extra safety rows from
-	// the terminal height so the rendered modal never overflows.
+	// The modal frame consumes border(2) + padding(2) = 4 rows.
+	// We also subtract 2 extra safety rows for the centering overlay
+	// and any rounding differences so the rendered modal never overflows.
 	maxContent := m.height - 6 // border(2) + padding(2) + safety(2)
 	if maxContent < 12 {
 		maxContent = 12
@@ -1508,4 +1565,48 @@ func (m SecretModal) estimateViewFocusLine() int {
 	}
 
 	return line
+}
+
+// estimateEditFocusLine estimates the line number (0-indexed) of the
+// currently focused field in edit mode, so viewportRender can auto-scroll
+// to keep it visible when the form overflows the terminal.
+func (m SecretModal) estimateEditFocusLine() int {
+	// title(1) + blank(1) = 2
+	line := 2
+
+	// Fixed fields: name(1), env(1), value(1), metadata(1)
+	switch {
+	case m.focusField <= fieldName:
+		return line
+	case m.focusField <= fieldEnv:
+		return line + 1
+	case m.focusField <= fieldValue:
+		return line + 2
+	case m.focusField <= fieldMetadata:
+		// Value field with textarea takes more lines.
+		if m.useTextarea {
+			return line + 3 + m.textareaHeight()
+		}
+		return line + 3
+	}
+
+	// Dynamic field pairs start after fixed fields.
+	// Offset: 4 fixed field lines + textarea if present + blank + header
+	offset := 4
+	if m.useTextarea {
+		offset += m.textareaHeight()
+	}
+	if len(m.fieldPairs) > 0 {
+		offset += 2 // blank + header
+	}
+
+	idx := m.focusField - fixedFieldCount
+	pairIdx := idx / 2
+	isValue := idx%2 == 1
+
+	pairLine := offset + pairIdx*2
+	if isValue {
+		pairLine++
+	}
+	return line + pairLine
 }
