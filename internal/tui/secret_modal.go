@@ -1039,7 +1039,7 @@ func (m SecretModal) viewModeView() string {
 	maxVisible := m.modalHeight()
 	content, _ = viewportRender(content, maxVisible, 0, m.estimateViewFocusLine())
 
-	modal := ModalStyle.Width(w).Render(content)
+	modal := ModalStyle.Width(w).MaxHeight(m.height - 2).Render(content)
 
 	if m.standalone {
 		return m.centerStandalone(modal)
@@ -1086,8 +1086,10 @@ func (m SecretModal) editModeView(titleText string) string {
 			extra := MutedStyle.Render(" (multi-line)")
 			b.WriteString(cursor + labelStyle.Render(f.label) + extra)
 			b.WriteString("\n")
-			// Indent the textarea view.
-			for _, line := range strings.Split(m.valueArea.View(), "\n") {
+			// Indent the textarea view. Trim trailing newline to avoid
+			// an off-by-one in line count.
+			taView := strings.TrimRight(m.valueArea.View(), "\n")
+			for _, line := range strings.Split(taView, "\n") {
 				b.WriteString("    " + line + "\n")
 			}
 			continue
@@ -1177,11 +1179,11 @@ func (m SecretModal) editModeView(titleText string) string {
 
 	content := b.String()
 
-	// Constrain to terminal: use viewportRender with auto-scroll to focused field.
-	maxVisible := m.modalHeight()
-	content, _ = viewportRender(content, maxVisible, 0, m.estimateEditFocusLine())
-
-	modal := ModalStyle.Width(w).Render(content)
+	// The textarea has built-in scrolling, so if textareaHeight() is
+	// correct the form already fits. Apply a lipgloss MaxHeight safety cap
+	// to guarantee we never overflow the terminal even if the line math
+	// is slightly off.
+	modal := ModalStyle.Width(w).MaxHeight(m.height - 2).Render(content)
 
 	if m.standalone {
 		return m.centerStandalone(modal)
@@ -1373,13 +1375,23 @@ func (m SecretModal) modalHeight() int {
 // fixed lines the edit/add form needs. This ensures the overall modal
 // fits within the terminal.
 func (m SecretModal) textareaHeight() int {
-	// Fixed overhead in edit mode: title(2) + name(1) + env(1) + value label(1)
-	// + metadata(1) + blank(1) + help(1) + field pairs header(1 if present)
-	// + field pair rows (2 per pair) + toast(1 if present).
-	overhead := 8 + len(m.fieldPairs)*2
+	// Fixed overhead in edit mode:
+	//   title(1) + blank(1) = 2
+	//   name(1) + env(1) + value label(1) + metadata(1) = 4
+	//   blank before help(1) + help bar(1) = 2
+	// Total fixed = 8
+	overhead := 8
+
+	// Dynamic field pairs: blank + header line + 2 lines per pair.
 	if len(m.fieldPairs) > 0 {
-		overhead += 2 // fields header + blank line
+		overhead += 2 + len(m.fieldPairs)*2
 	}
+
+	// Toast adds blank + toast line = 2.
+	if m.toast != "" {
+		overhead += 2
+	}
+
 	avail := m.modalHeight() - overhead
 	if avail < 3 {
 		avail = 3
@@ -1456,45 +1468,6 @@ func (m SecretModal) estimateViewFocusLine() int {
 				line++
 			}
 			itemIdx++
-		}
-	}
-
-	return line
-}
-
-// estimateEditFocusLine estimates the line number (0-indexed) of the
-// currently focused field in edit/add mode, so viewportRender can
-// auto-scroll to keep it visible.
-func (m SecretModal) estimateEditFocusLine() int {
-	line := 2 // title + blank line
-
-	// Fixed fields: name(1), env(1), value(varies), metadata(1).
-	for i := 0; i < fixedFieldCount; i++ {
-		if m.focusField == i {
-			return line
-		}
-		if i == fieldValue && m.useTextarea {
-			// Textarea takes 1 label line + textarea height lines.
-			line += 1 + m.textareaHeight()
-		} else {
-			line++
-		}
-	}
-
-	// Dynamic field pairs.
-	if len(m.fieldPairs) > 0 {
-		line += 2 // blank + fields header
-		for i := range m.fieldPairs {
-			keyIdx := fixedFieldCount + i*2
-			valIdx := fixedFieldCount + i*2 + 1
-			if m.focusField == keyIdx {
-				return line
-			}
-			line++ // key line
-			if m.focusField == valIdx {
-				return line
-			}
-			line++ // value line
 		}
 	}
 
