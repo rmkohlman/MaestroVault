@@ -376,6 +376,69 @@ func isLargeValue(v string) bool {
 	return len(v) > largeValueThreshold || strings.Contains(v, "\n")
 }
 
+// viewportRender crops content to fit within maxVisible lines, returning
+// the visible portion with scroll indicators (▲/▼) and the clamped scroll
+// offset.
+//
+// When targetLine >= 0, auto-scrolls to keep that line centered in the
+// viewport (useful for edit/view mode focus-following).
+// When targetLine < 0, uses scrollOffset directly (useful for manual
+// scroll like help overlay).
+func viewportRender(content string, maxVisible, scrollOffset, targetLine int) (string, int) {
+	lines := strings.Split(content, "\n")
+	total := len(lines)
+
+	if total <= maxVisible {
+		// Everything fits — no scrolling needed.
+		return content, 0
+	}
+
+	// Auto-scroll to target line if specified.
+	if targetLine >= 0 {
+		// Center the target line in the viewport.
+		scrollOffset = targetLine - maxVisible/2
+	}
+
+	// Clamp scroll offset.
+	maxScroll := total - maxVisible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+
+	end := scrollOffset + maxVisible
+	if end > total {
+		end = total
+	}
+
+	visible := lines[scrollOffset:end]
+	var b strings.Builder
+
+	// Top scroll indicator.
+	if scrollOffset > 0 {
+		b.WriteString(MutedStyle.Render("  ▲ " + fmt.Sprintf("%d more lines above", scrollOffset)))
+		b.WriteString("\n")
+		// Replace the first visible line with the indicator, so total height stays constant.
+		visible = visible[1:]
+	}
+
+	b.WriteString(strings.Join(visible, "\n"))
+
+	// Bottom scroll indicator.
+	remaining := total - end
+	if remaining > 0 {
+		b.WriteString("\n")
+		b.WriteString(MutedStyle.Render("  ▼ " + fmt.Sprintf("%d more lines below", remaining)))
+	}
+
+	return b.String(), scrollOffset
+}
+
 // wrapAndTruncate word-wraps value to width columns, then truncates to
 // maxLines visible lines. It returns the visible text and the total number of
 // wrapped lines.

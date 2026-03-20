@@ -224,6 +224,9 @@ type Model struct {
 	settingsCursor int
 	settingsConfig vault.Config
 
+	// Help overlay scroll offset.
+	helpScroll int
+
 	// Toast notification.
 	toast     string
 	toastKind string // "success", "error", "info"

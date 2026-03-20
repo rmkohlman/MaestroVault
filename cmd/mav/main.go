@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -228,6 +229,7 @@ func newInitCmd() *cobra.Command {
 func newSetCmd() *cobra.Command {
 	var (
 		valueFlag  string
+		fromFile   string
 		field      string
 		metadata   []string
 		generatePw bool
@@ -239,7 +241,10 @@ func newSetCmd() *cobra.Command {
 		Use:   "set <name>",
 		Short: "Store a secret",
 		Long: `Encrypts and stores a secret. Value can be provided via:
-  --value flag, --generate flag (auto-generate password), stdin, or interactive popup.
+  --value flag, --from-file flag, --generate flag (auto-generate password), stdin, or interactive popup.
+
+Use --from-file to store the contents of a file byte-for-byte (preserves newlines):
+  mav set my-cert --env prod --from-file cert.pem
 
 Use --field to set a named field within a secret entry:
   mav set aws-creds --field access_key_id --value AKIA...`,
@@ -276,6 +281,13 @@ Use --field to set a named field within a secret entry:
 					return err
 				}
 				value = pw
+			case fromFile != "":
+				data, err := os.ReadFile(fromFile)
+				if err != nil {
+					printError(fmt.Sprintf("Cannot read file: %s", err), "Check the file path exists and is readable.")
+					return err
+				}
+				value = string(data)
 			case valueFlag != "":
 				value = valueFlag
 			default:
@@ -296,14 +308,12 @@ Use --field to set a named field within a secret entry:
 						return nil
 					})
 				}
-				// Piped input — read as plaintext.
-				scanner := bufio.NewScanner(os.Stdin)
-				if scanner.Scan() {
-					value = scanner.Text()
-				}
-				if err := scanner.Err(); err != nil {
+				// Piped input — read all content (preserves newlines).
+				data, err := io.ReadAll(os.Stdin)
+				if err != nil {
 					return fmt.Errorf("reading input: %w", err)
 				}
+				value = string(data)
 			}
 
 			if value == "" {
@@ -333,6 +343,7 @@ Use --field to set a named field within a secret entry:
 	}
 
 	cmd.Flags().StringVarP(&valueFlag, "value", "v", "", "Secret value (visible in process list; omit for interactive popup)")
+	cmd.Flags().StringVarP(&fromFile, "from-file", "f", "", "Read secret value from a file (preserves content byte-for-byte)")
 	cmd.Flags().StringVar(&field, "field", "", "Set a named field instead of the main value")
 	cmd.Flags().StringSliceVarP(&metadata, "metadata", "m", nil, "Metadata as key=value (repeatable)")
 	cmd.Flags().StringP("env", "e", "", "Environment (e.g. dev, staging, prod)")
@@ -699,15 +710,13 @@ func newEditCmd() *cobra.Command {
 
 				// Direct update path (flags or pipe).
 				if newValue == nil && newMetadata == nil {
-					// Piped input — read plaintext value.
-					scanner := bufio.NewScanner(os.Stdin)
-					if scanner.Scan() {
-						val := scanner.Text()
-						newValue = &val
-					}
-					if err := scanner.Err(); err != nil {
+					// Piped input — read all content (preserves newlines).
+					data, err := io.ReadAll(os.Stdin)
+					if err != nil {
 						return fmt.Errorf("reading input: %w", err)
 					}
+					val := string(data)
+					newValue = &val
 				}
 
 				if err := v.Edit(ctx, name, resolvedEnv, newValue, newMetadata); err != nil {

@@ -41,6 +41,9 @@ mav init
 # Store a secret (with optional environment and metadata)
 mav set my-api-key --value "sk-abc123" --env prod --metadata service=api
 
+# Store a file byte-for-byte (PEM certs, SSH keys, etc.)
+mav set tls-cert --from-file cert.pem --env prod
+
 # Retrieve it
 mav get my-api-key --env prod
 

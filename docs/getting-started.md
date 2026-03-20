@@ -62,6 +62,12 @@ If you omit `--value`, MaestroVault reads from stdin (useful for piping):
 echo "my-secret-value" | mav set pipeline-token
 ```
 
+To store a file byte-for-byte (PEM certificates, SSH keys, etc.):
+
+```bash
+mav set tls-cert --from-file cert.pem --env prod
+```
+
 ## Retrieve a secret
 
 ```bash

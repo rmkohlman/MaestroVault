@@ -430,9 +430,17 @@ func (m Model) viewHelpOverlay() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(MutedStyle.Render(" Press ? or Esc to close"))
+	b.WriteString(MutedStyle.Render(" Press ? or Esc to close  ·  j/k to scroll"))
 
 	content := b.String()
+
+	// Constrain to terminal height: modal border/padding (4) + centering margin (2).
+	maxVisible := m.height - 6
+	if maxVisible < 10 {
+		maxVisible = 10
+	}
+	content, _ = viewportRender(content, maxVisible, m.helpScroll, -1)
+
 	modal := ModalStyle.Width(w).Render(content)
 
 	return m.centerOverlay(modal)
@@ -528,6 +536,17 @@ func (m Model) viewGeneratorOverlay() string {
 	}
 
 	content := b.String()
+
+	// Safety cap: constrain to terminal height for very small terminals.
+	maxVisible := m.height - 6
+	if maxVisible < 10 {
+		maxVisible = 10
+	}
+	contentLines := strings.Count(content, "\n") + 1
+	if contentLines > maxVisible {
+		content, _ = viewportRender(content, maxVisible, 0, -1)
+	}
+
 	modal := ModalStyle.Width(w).Render(content)
 
 	return m.centerOverlay(modal)
@@ -556,6 +575,17 @@ func (m Model) viewInfoOverlay() string {
 	b.WriteString(MutedStyle.Render(" Press Esc to close"))
 
 	content := b.String()
+
+	// Safety cap: constrain to terminal height for very small terminals.
+	maxVisible := m.height - 6
+	if maxVisible < 10 {
+		maxVisible = 10
+	}
+	contentLines := strings.Count(content, "\n") + 1
+	if contentLines > maxVisible {
+		content, _ = viewportRender(content, maxVisible, 0, -1)
+	}
+
 	modal := ModalStyle.Width(w).Render(content)
 
 	return m.centerOverlay(modal)
@@ -605,6 +635,17 @@ func (m Model) viewSettingsOverlay() string {
 	))
 
 	content := b.String()
+
+	// Safety cap: constrain to terminal height for very small terminals.
+	maxVisible := m.height - 6
+	if maxVisible < 10 {
+		maxVisible = 10
+	}
+	contentLines := strings.Count(content, "\n") + 1
+	if contentLines > maxVisible {
+		content, _ = viewportRender(content, maxVisible, 0, -1)
+	}
+
 	modal := ModalStyle.Width(w).Render(content)
 
 	return m.centerOverlay(modal)

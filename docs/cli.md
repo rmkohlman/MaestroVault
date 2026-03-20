@@ -30,18 +30,22 @@ Store or update a secret.
 ```bash
 mav set db-password --value "s3cret"
 mav set api-key --value "sk-123" --env prod --metadata service=api
+mav set my-cert --from-file cert.pem --env prod
 echo "piped-value" | mav set token-name
 mav set db-creds --field host --value "db.example.com"
 mav set db-creds --field port --value "5432" --env prod
 ```
 
-On a TTY with no `--value` or `--generate` flag, `mav set` opens an interactive modal for entering the secret name, value, environment, and metadata.
+On a TTY with no `--value`, `--from-file`, or `--generate` flag, `mav set` opens an interactive modal for entering the secret name, value, environment, and metadata.
+
+When `--from-file` is provided, the file contents are stored byte-for-byte (preserving newlines, whitespace, and binary content). This is ideal for PEM certificates, SSH keys, and multi-line config files.
 
 When `--field` is provided, stores a single encrypted field on the secret instead of setting the main value. The parent secret is created automatically if it doesn't exist.
 
 | Flag | Description |
 |------|-------------|
 | `--value`, `-v` | Secret value (reads from stdin if omitted) |
+| `--from-file`, `-f` | Read secret value from a file (preserves content byte-for-byte) |
 | `--field` | Set a named field instead of the main value |
 | `--metadata`, `-m` | Metadata as `key=value` (repeatable) |
 | `--env`, `-e` | Environment (e.g. dev, staging, prod) |

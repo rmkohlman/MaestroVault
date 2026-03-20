@@ -240,7 +240,7 @@ func (m *SecretModal) initValueTextarea(value string) {
 		w = 30
 	}
 	ta.SetWidth(w)
-	ta.SetHeight(6)
+	ta.SetHeight(m.textareaHeight())
 	ta.CharLimit = 0
 	ta.ShowLineNumbers = false
 	m.valueArea = ta
@@ -319,6 +319,15 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Resize textarea to fit new terminal dimensions.
+		if m.useTextarea {
+			w := m.modalWidth() - 16
+			if w < 30 {
+				w = 30
+			}
+			m.valueArea.SetWidth(w)
+			m.valueArea.SetHeight(m.textareaHeight())
+		}
 		return m, nil
 
 	case secretModalResultMsg:
@@ -1025,6 +1034,11 @@ func (m SecretModal) viewModeView() string {
 	b.WriteString("  " + strings.Join(helpParts, MutedStyle.Render("  ·  ")))
 
 	content := b.String()
+
+	// Constrain to terminal: use viewportRender with auto-scroll to focused item.
+	maxVisible := m.modalHeight()
+	content, _ = viewportRender(content, maxVisible, 0, m.estimateViewFocusLine())
+
 	modal := ModalStyle.Width(w).Render(content)
 
 	if m.standalone {
@@ -1162,6 +1176,11 @@ func (m SecretModal) editModeView(titleText string) string {
 	}
 
 	content := b.String()
+
+	// Constrain to terminal: use viewportRender with auto-scroll to focused field.
+	maxVisible := m.modalHeight()
+	content, _ = viewportRender(content, maxVisible, 0, m.estimateEditFocusLine())
+
 	modal := ModalStyle.Width(w).Render(content)
 
 	if m.standalone {
@@ -1339,6 +1358,38 @@ func (m SecretModal) modalWidth() int {
 	return w
 }
 
+// modalHeight returns the maximum content height for the modal, scaled to the
+// terminal height. The modal border + padding consume ~4 rows, so we subtract
+// that and leave a small margin.
+func (m SecretModal) modalHeight() int {
+	h := m.height - 4 // border (2) + padding (1*2)
+	if h < 12 {
+		h = 12
+	}
+	return h
+}
+
+// textareaHeight returns the ideal textarea height given how many other
+// fixed lines the edit/add form needs. This ensures the overall modal
+// fits within the terminal.
+func (m SecretModal) textareaHeight() int {
+	// Fixed overhead in edit mode: title(2) + name(1) + env(1) + value label(1)
+	// + metadata(1) + blank(1) + help(1) + field pairs header(1 if present)
+	// + field pair rows (2 per pair) + toast(1 if present).
+	overhead := 8 + len(m.fieldPairs)*2
+	if len(m.fieldPairs) > 0 {
+		overhead += 2 // fields header + blank line
+	}
+	avail := m.modalHeight() - overhead
+	if avail < 3 {
+		avail = 3
+	}
+	if avail > 20 {
+		avail = 20
+	}
+	return avail
+}
+
 // sortedFieldKeys returns the keys of a string map in sorted order.
 func sortedFieldKeys(m map[string]string) []string {
 	if len(m) == 0 {
@@ -1350,4 +1401,102 @@ func sortedFieldKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// estimateViewFocusLine estimates the line number (0-indexed) of the
+// currently focused item in view mode, so viewportRender can auto-scroll
+// to keep it visible.
+func (m SecretModal) estimateViewFocusLine() int {
+	if m.entry == nil {
+		return 0
+	}
+	line := 2 // title + blank line
+	hasValue := m.entry.Value != ""
+	itemIdx := 0
+
+	if hasValue {
+		if m.viewCursor == itemIdx {
+			return line
+		}
+		// Account for multi-line value display.
+		masked, _ := m.viewMasks[itemIdx]
+		if !masked && isLargeValue(m.entry.Value) {
+			_, total := wrapAndTruncate(m.entry.Value, m.modalWidth()-4, 6)
+			lines := minVal(total, 6)
+			line += 1 + lines // label line + content lines
+			if total > 6 {
+				line++ // "N more lines" hint
+			}
+		} else {
+			line++ // single line value
+		}
+		itemIdx++
+	}
+
+	// Fields.
+	if len(m.entry.Fields) > 0 {
+		if hasValue {
+			line++ // blank separator
+		}
+		keys := sortedFieldKeys(m.entry.Fields)
+		for _, key := range keys {
+			if m.viewCursor == itemIdx {
+				return line
+			}
+			masked, _ := m.viewMasks[itemIdx]
+			fieldVal := m.entry.Fields[key]
+			if !masked && isLargeValue(fieldVal) {
+				_, total := wrapAndTruncate(fieldVal, m.modalWidth()-4, 6)
+				lines := minVal(total, 6)
+				line += 1 + lines
+				if total > 6 {
+					line++
+				}
+			} else {
+				line++
+			}
+			itemIdx++
+		}
+	}
+
+	return line
+}
+
+// estimateEditFocusLine estimates the line number (0-indexed) of the
+// currently focused field in edit/add mode, so viewportRender can
+// auto-scroll to keep it visible.
+func (m SecretModal) estimateEditFocusLine() int {
+	line := 2 // title + blank line
+
+	// Fixed fields: name(1), env(1), value(varies), metadata(1).
+	for i := 0; i < fixedFieldCount; i++ {
+		if m.focusField == i {
+			return line
+		}
+		if i == fieldValue && m.useTextarea {
+			// Textarea takes 1 label line + textarea height lines.
+			line += 1 + m.textareaHeight()
+		} else {
+			line++
+		}
+	}
+
+	// Dynamic field pairs.
+	if len(m.fieldPairs) > 0 {
+		line += 2 // blank + fields header
+		for i := range m.fieldPairs {
+			keyIdx := fixedFieldCount + i*2
+			valIdx := fixedFieldCount + i*2 + 1
+			if m.focusField == keyIdx {
+				return line
+			}
+			line++ // key line
+			if m.focusField == valIdx {
+				return line
+			}
+			line++ // value line
+		}
+	}
+
+	return line
 }

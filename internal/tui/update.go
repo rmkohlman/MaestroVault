@@ -519,6 +519,13 @@ func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "?", "esc", "q":
 		m.showHelp = false
+		m.helpScroll = 0
+	case "j", "down":
+		m.helpScroll++
+	case "k", "up":
+		if m.helpScroll > 0 {
+			m.helpScroll--
+		}
 	}
 	return m, nil
 }
