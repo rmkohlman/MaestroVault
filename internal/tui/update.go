@@ -49,13 +49,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case statusMsg:
-		m.status = msg.text
 		m.toast = msg.text
 		m.toastKind = "success"
 		return m, tea.Batch(loadSecrets(m.vault), clearToastAfter(3*time.Second))
 
 	case errMsg:
-		m.err = msg.err
 		m.toast = msg.err.Error()
 		m.toastKind = "error"
 		return m, clearToastAfter(5 * time.Second)
@@ -282,6 +280,7 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 		if s := m.currentSecret(); s != nil {
 			m.screen = screenDetail
 			m.valueMasked = true
+			m.detailScroll = 0
 			m.selectedEnv = s.Environment
 			return m, getSecret(m.vault, s.Name, s.Environment)
 		}
@@ -404,8 +403,14 @@ func (m Model) handleNormalDetail(msg tea.KeyMsg, key string) (tea.Model, tea.Cm
 	case "h", "esc":
 		m.screen = screenList
 		m.valueMasked = true
+		m.detailScroll = 0
 	case " ":
 		m.valueMasked = !m.valueMasked
+		m.detailScroll = 0
+	case "j", "down":
+		m.detailScroll++
+	case "k", "up":
+		m.detailScroll = maxVal(m.detailScroll-1, 0)
 	case "c":
 		if s := m.currentSecret(); s != nil {
 			return m, copyToClipboard(m.vault, s.Name, s.Environment)
@@ -419,6 +424,7 @@ func (m Model) handleNormalDetail(msg tea.KeyMsg, key string) (tea.Model, tea.Cm
 			m.selectedEnv = s.Environment
 		}
 		m.screen = screenConfirmDelete
+		m.detailScroll = 0
 	case "q":
 		m.quitting = true
 		return m, tea.Quit
@@ -705,6 +711,7 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if s := m.currentSecret(); s != nil {
 				m.screen = screenDetail
 				m.valueMasked = true
+				m.detailScroll = 0
 				m.selectedEnv = s.Environment
 				return m, getSecret(m.vault, s.Name, s.Environment)
 			}
@@ -764,8 +771,14 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.screen = screenList
 			m.valueMasked = true
+			m.detailScroll = 0
 		case " ":
 			m.valueMasked = !m.valueMasked
+			m.detailScroll = 0
+		case "j", "down":
+			m.detailScroll++
+		case "k", "up":
+			m.detailScroll = maxVal(m.detailScroll-1, 0)
 		case "c":
 			if s := m.currentSecret(); s != nil {
 				return m, copyToClipboard(m.vault, s.Name, s.Environment)
@@ -779,6 +792,7 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.selectedEnv = s.Environment
 			}
 			m.screen = screenConfirmDelete
+			m.detailScroll = 0
 		case "q":
 			m.quitting = true
 			return m, tea.Quit

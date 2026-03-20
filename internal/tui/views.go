@@ -205,10 +205,13 @@ func (m Model) viewListScreen() string {
 // ── Detail screen ─────────────────────────────────────────────
 
 func (m Model) viewDetailScreen() string {
-	var b strings.Builder
 	w := m.width
 	if w <= 0 {
 		w = 80
+	}
+	h := m.height
+	if h <= 0 {
+		h = 24
 	}
 
 	s := m.currentSecret()
@@ -216,79 +219,32 @@ func (m Model) viewDetailScreen() string {
 		return MutedStyle.Render("No secret selected.")
 	}
 
-	b.WriteString(TitleStyle.Render("  " + s.Name))
+	// ── Header (fixed) ────────────────────────────────────────
+	var header strings.Builder
+	header.WriteString(TitleStyle.Render("  " + s.Name))
 	if s.Environment != "" {
-		b.WriteString("  " + EnvBadgeStyle.Render("["+s.Environment+"]"))
+		header.WriteString("  " + EnvBadgeStyle.Render("["+s.Environment+"]"))
 	}
-	b.WriteString("\n")
-	b.WriteString(dividerLine(w))
-	b.WriteString("\n\n")
+	header.WriteString("\n")
+	header.WriteString(dividerLine(w))
+	headerStr := header.String()
 
-	// Environment.
-	if s.Environment != "" {
-		b.WriteString(MutedStyle.Render("  Environment: "))
-		b.WriteString(EnvBadgeStyle.Render(s.Environment))
-		b.WriteString("\n\n")
-	}
-
-	// Value.
-	b.WriteString(MutedStyle.Render("  Value: "))
-	if m.valueMasked {
-		b.WriteString(MaskedValueStyle.Render(maskValue(s.Value)))
-	} else {
-		b.WriteString(SecretValueStyle.Render(s.Value))
-	}
-	b.WriteString("\n\n")
-
-	// Metadata.
-	if len(s.Metadata) > 0 {
-		b.WriteString(MutedStyle.Render("  Metadata: "))
-		b.WriteString(formatMetadataInline(s.Metadata))
-		b.WriteString("\n\n")
-	}
-
-	// Fields.
-	if len(s.Fields) > 0 {
-		b.WriteString(MutedStyle.Render("  Fields:"))
-		b.WriteString("\n")
-		keys := sortedFieldKeys(s.Fields)
-		for _, key := range keys {
-			b.WriteString("    " + FieldKeyStyle.Render(key) + " ")
-			if m.valueMasked {
-				b.WriteString(MaskedValueStyle.Render(maskValue(s.Fields[key])))
-			} else {
-				b.WriteString(SecretValueStyle.Render(s.Fields[key]))
-			}
-			b.WriteString("\n")
-		}
-		b.WriteString("\n")
-	}
-
-	// Timestamps.
-	if s.CreatedAt != "" {
-		b.WriteString(MutedStyle.Render("  Created: ") + s.CreatedAt)
-		b.WriteString("\n")
-	}
-	if s.UpdatedAt != "" {
-		b.WriteString(MutedStyle.Render("  Updated: ") + s.UpdatedAt)
-		b.WriteString("\n")
-	}
-
-	b.WriteString("\n")
-	b.WriteString(dividerLine(w))
-	b.WriteString("\n")
+	// ── Footer (fixed) ────────────────────────────────────────
+	var footer strings.Builder
+	footer.WriteString(dividerLine(w))
+	footer.WriteString("\n")
 
 	// Toast (above help bar so it never pushes help off-screen).
 	if t := m.renderToast(); t != "" {
-		b.WriteString(t)
-		b.WriteString("\n")
+		footer.WriteString(t)
+		footer.WriteString("\n")
 	}
 
 	// Help bar.
 	if m.vimEnabled {
-		b.WriteString(m.vimHelpBar())
+		footer.WriteString(m.vimHelpBar())
 	} else {
-		b.WriteString(m.helpBar(
+		footer.WriteString(m.helpBar(
 			"esc", "back",
 			"space", "peek",
 			"c", "copy",
@@ -297,8 +253,81 @@ func (m Model) viewDetailScreen() string {
 			"q", "quit",
 		))
 	}
+	footerStr := footer.String()
 
-	return b.String()
+	// ── Body (scrollable) ─────────────────────────────────────
+	var body strings.Builder
+
+	// Environment.
+	if s.Environment != "" {
+		body.WriteString(MutedStyle.Render("  Environment: "))
+		body.WriteString(EnvBadgeStyle.Render(s.Environment))
+		body.WriteString("\n")
+	}
+
+	// Value.
+	body.WriteString(MutedStyle.Render("  Value: "))
+	if m.valueMasked {
+		body.WriteString(MaskedValueStyle.Render(maskValue(s.Value)))
+	} else {
+		body.WriteString(SecretValueStyle.Render(s.Value))
+	}
+	body.WriteString("\n")
+
+	// Metadata.
+	if len(s.Metadata) > 0 {
+		body.WriteString(MutedStyle.Render("  Metadata: "))
+		body.WriteString(formatMetadataInline(s.Metadata))
+		body.WriteString("\n")
+	}
+
+	// Fields.
+	if len(s.Fields) > 0 {
+		body.WriteString(MutedStyle.Render("  Fields:"))
+		body.WriteString("\n")
+		keys := sortedFieldKeys(s.Fields)
+		for _, key := range keys {
+			body.WriteString("    " + FieldKeyStyle.Render(key) + " ")
+			if m.valueMasked {
+				body.WriteString(MaskedValueStyle.Render(maskValue(s.Fields[key])))
+			} else {
+				body.WriteString(SecretValueStyle.Render(s.Fields[key]))
+			}
+			body.WriteString("\n")
+		}
+	}
+
+	// Timestamps.
+	if s.CreatedAt != "" {
+		body.WriteString(MutedStyle.Render("  Created: ") + s.CreatedAt)
+		body.WriteString("\n")
+	}
+	if s.UpdatedAt != "" {
+		body.WriteString(MutedStyle.Render("  Updated: ") + s.UpdatedAt)
+		body.WriteString("\n")
+	}
+
+	bodyStr := strings.TrimRight(body.String(), "\n")
+
+	// ── Compose with viewport constraint ──────────────────────
+	headerLines := strings.Count(headerStr, "\n") + 1
+	footerLines := strings.Count(footerStr, "\n") + 1
+	// +2 for the blank lines between header/body and body/footer.
+	availableHeight := h - headerLines - footerLines - 2
+	if availableHeight < 3 {
+		availableHeight = 3
+	}
+
+	constrainedBody, _ := viewportRender(bodyStr, availableHeight, m.detailScroll, -1)
+
+	var out strings.Builder
+	out.WriteString(headerStr)
+	out.WriteString("\n")
+	out.WriteString(constrainedBody)
+	out.WriteString("\n")
+	out.WriteString(footerStr)
+
+	return out.String()
 }
 
 // ── Confirm delete screen ─────────────────────────────────────

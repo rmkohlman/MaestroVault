@@ -29,7 +29,6 @@ type vimMode int
 
 const (
 	ModeNormal vimMode = iota
-	ModeInsert
 	ModeVisual
 )
 
@@ -37,8 +36,6 @@ func (m vimMode) String() string {
 	switch m {
 	case ModeNormal:
 		return "NORMAL"
-	case ModeInsert:
-		return "INSERT"
 	case ModeVisual:
 		return "VISUAL"
 	default:
@@ -169,7 +166,6 @@ type Model struct {
 	vault   vault.Vault         // interface (not pointer)
 	secrets []vault.SecretEntry // full list from vault
 	display []vault.SecretEntry // sorted + filtered view
-	err     error
 
 	screen       screen
 	cursor       int
@@ -190,7 +186,8 @@ type Model struct {
 	fuzzySearch  bool // true = fuzzy matching, false = substring
 
 	// Detail view.
-	valueMasked bool // value masked by default in detail view
+	valueMasked  bool // value masked by default in detail view
+	detailScroll int  // scroll offset for detail screen body content
 
 	// Secret modal (unified add/edit/view overlay).
 	showSecretModal bool
@@ -220,9 +217,6 @@ type Model struct {
 	// Toast notification.
 	toast     string
 	toastKind string // "success", "error", "info"
-
-	// Ephemeral status message (legacy compat).
-	status string
 }
 
 // Opts configures optional TUI behavior.

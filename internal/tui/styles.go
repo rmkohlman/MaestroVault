@@ -17,14 +17,7 @@ var (
 	ColorCyan    = lipgloss.Color("6")
 	ColorWhite   = lipgloss.Color("7")
 
-	ColorBrightBlack   = lipgloss.Color("8")
-	ColorBrightRed     = lipgloss.Color("9")
-	ColorBrightGreen   = lipgloss.Color("10")
-	ColorBrightYellow  = lipgloss.Color("11")
-	ColorBrightBlue    = lipgloss.Color("12")
-	ColorBrightMagenta = lipgloss.Color("13")
-	ColorBrightCyan    = lipgloss.Color("14")
-	ColorBrightWhite   = lipgloss.Color("15")
+	ColorBrightBlack = lipgloss.Color("8")
 )
 
 // Semantic color aliases — map intent to ANSI palette slots.
@@ -32,11 +25,8 @@ var (
 	ColorPrimary   = ColorBlue
 	ColorSecondary = ColorMagenta
 	ColorAccent    = ColorCyan
-	ColorSuccess   = ColorGreen
 	ColorWarning   = ColorYellow
-	ColorError     = ColorRed
 	ColorMuted     = ColorBrightBlack
-	ColorSubtle    = ColorBrightBlack
 )
 
 // Reusable style fragments.
@@ -46,18 +36,12 @@ var (
 			Bold(true).
 			Foreground(ColorPrimary)
 
-	// Subtitle is dimmer, used beneath titles.
-	SubtitleStyle = lipgloss.NewStyle().
-			Foreground(ColorMuted)
-
 	// Accent is used for interactive highlights (selected items, cursor).
 	AccentStyle = lipgloss.NewStyle().
 			Foreground(ColorAccent)
 
-	// Success / Warning / Error for status messages.
-	SuccessStyle = lipgloss.NewStyle().Foreground(ColorSuccess)
+	// Warning for delete confirmation messages.
 	WarningStyle = lipgloss.NewStyle().Foreground(ColorWarning)
-	ErrorStyle   = lipgloss.NewStyle().Foreground(ColorError)
 
 	// SecretValue renders secret values in bold green.
 	SecretValueStyle = lipgloss.NewStyle().
@@ -81,12 +65,6 @@ var (
 	// Muted text for timestamps, hints, etc.
 	MutedStyle = lipgloss.NewStyle().
 			Foreground(ColorMuted)
-
-	// Border box used around panels and modals.
-	BoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorPrimary).
-			Padding(0, 1)
 
 	// Modal style for overlays (help, generator, info).
 	ModalStyle = lipgloss.NewStyle().

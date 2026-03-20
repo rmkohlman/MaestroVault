@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -326,6 +327,395 @@ func TestSecretModal_ModalWidth_Bounds(t *testing.T) {
 			}
 			if got < tc.wantMin || got > tc.wantMax {
 				t.Errorf("modalWidth() = %d, want in [%d, %d]", got, tc.wantMin, tc.wantMax)
+			}
+		})
+	}
+}
+
+// ── Overflow trace tests ──────────────────────────────────────
+
+// TestSecretModal_EditMode_LargeValue_CenterOverlay tests the FULL render path
+// including centerOverlay (lipgloss.Place), which is what the user actually sees.
+// This is the exact scenario: large PEM cert -> edit mode -> centered in terminal.
+func TestSecretModal_EditMode_LargeValue_CenterOverlay(t *testing.T) {
+	const termHeight = 40
+	const termWidth = 80
+
+	entry := newTestEntry("my-pem-cert", largeSecret(100))
+	m := newEditModalWithDims(entry, termHeight, termWidth)
+
+	// This is what editModeView returns (the modal box itself)
+	modalOnly := m.editModeView("Editing")
+	modalLines := lineCount(modalOnly)
+
+	// This is what the user actually sees — the modal centered via lipgloss.Place
+	// (simulating what views.go centerOverlay does)
+	centeredOutput := m.centerStandalone(modalOnly) // Uses lipgloss.Place
+	centeredLines := lineCount(centeredOutput)
+
+	t.Logf("editModeView() output: %d lines", modalLines)
+	t.Logf("After centering (lipgloss.Place): %d lines", centeredLines)
+	t.Logf("Terminal height: %d", termHeight)
+
+	if modalLines > termHeight {
+		t.Errorf("editModeView() produces %d lines, exceeds terminal height %d", modalLines, termHeight)
+	}
+	if centeredLines > termHeight {
+		t.Errorf("Centered output produces %d lines, exceeds terminal height %d", centeredLines, termHeight)
+	}
+}
+
+// TestSecretModal_EditMode_TextareaRenderedHeight checks that the textarea
+// view itself doesn't produce more lines than textareaHeight() + a small margin.
+// NOTE: NewSecretModalEdit does NOT call initValueTextarea — we must do it manually
+// to test the textarea path (simulating the view→edit transition).
+func TestSecretModal_EditMode_TextareaRenderedHeight(t *testing.T) {
+	const termHeight = 40
+	const termWidth = 80
+
+	entry := newTestEntry("my-pem-cert", largeSecret(100))
+	m := newEditModalWithDims(entry, termHeight, termWidth)
+
+	// Simulate the view→edit transition which checks isLargeValue and inits textarea.
+	if isLargeValue(entry.Value) {
+		m.initValueTextarea(entry.Value)
+	}
+
+	if !m.useTextarea {
+		t.Fatal("expected useTextarea=true for large value after initValueTextarea")
+	}
+
+	taHeight := m.textareaHeight()
+	taView := m.valueArea.View()
+	taViewLines := strings.Count(taView, "\n") + 1
+
+	t.Logf("textareaHeight() = %d", taHeight)
+	t.Logf("textarea.View() produces %d lines", taViewLines)
+
+	// The textarea's View() output should roughly match its configured height.
+	// A small deviation (±5) is expected due to internal padding/chrome.
+	if taViewLines > taHeight+5 {
+		t.Errorf("textarea View() produces %d lines but textareaHeight()=%d (delta=%d)",
+			taViewLines, taHeight, taViewLines-taHeight)
+	}
+}
+
+// TestSecretModal_EditMode_ConstructorMissingTextarea verifies that
+// NewSecretModalEdit does NOT initialize textarea for large values — which
+// means Path 1 (list→edit) always uses textinput regardless of value size.
+func TestSecretModal_EditMode_ConstructorMissingTextarea(t *testing.T) {
+	entry := newTestEntry("my-pem-cert", largeSecret(100))
+
+	// Verify isLargeValue detects this correctly.
+	if !isLargeValue(entry.Value) {
+		t.Fatal("expected isLargeValue to return true for 100-line secret")
+	}
+
+	m := NewSecretModalEdit(entry, nil)
+	m.height = 40
+	m.width = 80
+
+	t.Logf("useTextarea = %v (expected false — constructor doesn't init textarea)", m.useTextarea)
+	t.Logf("valueInput value length = %d bytes", len(m.valueInput.Value()))
+
+	if m.useTextarea {
+		t.Error("NewSecretModalEdit unexpectedly initialized textarea")
+	}
+}
+
+// TestSecretModal_EditMode_ViewToEditPath_Textarea tests the view→edit transition
+// path which DOES initialize textarea. This simulates: user views secret, presses
+// "e" to switch to edit mode.
+func TestSecretModal_EditMode_ViewToEditPath_Textarea(t *testing.T) {
+	const termHeight = 40
+	const termWidth = 80
+
+	entry := newTestEntry("my-pem-cert", largeSecret(100))
+
+	// Start in view mode (as the user would)
+	m := newModalWithDims(entry, termHeight, termWidth)
+
+	// Simulate pressing "e" — the handleViewKey code path
+	// This is what handleViewKey does at line 486-509:
+	m.mode = modalEdit
+	m.origName = entry.Name
+	m.origEnv = entry.Environment
+	m.nameInput.SetValue(entry.Name)
+	m.envInput.SetValue(entry.Environment)
+	m.metadataInput.SetValue(formatMetadataPlain(entry.Metadata))
+	if isLargeValue(entry.Value) {
+		m.initValueTextarea(entry.Value)
+	} else {
+		m.valueInput.SetValue(entry.Value)
+	}
+	m.focusField = fieldName
+	m.focusCurrentField()
+
+	// Now render the edit mode view
+	rendered := m.editModeView("Editing")
+	lines := lineCount(rendered)
+
+	t.Logf("View→Edit path (textarea): useTextarea=%v, rendered lines=%d", m.useTextarea, lines)
+
+	if lines > termHeight {
+		t.Errorf("View→Edit path: %d lines exceeds terminal height %d", lines, termHeight)
+	}
+
+	// Also test the full render path through centerOverlay
+	centeredOutput := m.centerStandalone(rendered)
+	centeredLines := lineCount(centeredOutput)
+
+	t.Logf("View→Edit path centered: %d lines", centeredLines)
+
+	if centeredLines > termHeight {
+		t.Errorf("View→Edit centered: %d lines exceeds terminal height %d", centeredLines, termHeight)
+	}
+}
+
+// TestSecretModal_FullRenderPath_ThroughModelView tests the complete render
+// path: SecretModal.View() -> Model.View() -> centerOverlay
+func TestSecretModal_FullRenderPath_ThroughModelView(t *testing.T) {
+	const termHeight = 40
+	const termWidth = 80
+
+	entry := newTestEntry("my-pem-cert", largeSecret(100))
+
+	// Build parent Model with the secret modal open
+	parentModel := Model{
+		width:           termWidth,
+		height:          termHeight,
+		showSecretModal: true,
+	}
+
+	// Build the edit modal
+	sm := NewSecretModalEdit(entry, nil)
+	sm.width = termWidth
+	sm.height = termHeight
+	sm.initViewport()
+	parentModel.secretModal = sm
+
+	// Render through the parent Model.View()
+	fullOutput := parentModel.View()
+	lines := lineCount(fullOutput)
+
+	// Also count RAW lines (before ANSI stripping) to catch any discrepancy.
+	rawLines := strings.Count(fullOutput, "\n") + 1
+
+	t.Logf("Full Model.View() output: %d lines (ANSI-stripped), %d raw lines", lines, rawLines)
+
+	if lines > termHeight {
+		t.Errorf("Full render path produces %d lines, exceeds terminal height %d", lines, termHeight)
+	}
+	if rawLines > termHeight {
+		t.Errorf("Full render path (raw) produces %d lines, exceeds terminal height %d", rawLines, termHeight)
+	}
+}
+
+// TestSecretModal_EditMode_RawLineCount verifies the raw (non-ANSI-stripped)
+// line count, which is what the terminal actually renders. ANSI stripping
+// can collapse lines if escape codes span newlines.
+func TestSecretModal_EditMode_RawLineCount(t *testing.T) {
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+		numLines   int
+		useTA      bool // whether to simulate textarea init
+	}{
+		{"small term no textarea", 40, 80, 100, false},
+		{"small term with textarea", 40, 80, 100, true},
+		{"large term no textarea", 60, 200, 100, false},
+		{"large term with textarea", 60, 200, 100, true},
+		{"24-line terminal", 24, 80, 100, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := newTestEntry("my-pem-cert", largeSecret(tc.numLines))
+			m := newEditModalWithDims(entry, tc.termHeight, tc.termWidth)
+
+			if tc.useTA && isLargeValue(entry.Value) {
+				m.initValueTextarea(entry.Value)
+			}
+
+			rendered := m.editModeView("Editing")
+			rawLines := strings.Count(rendered, "\n") + 1
+			strippedLines := lineCount(rendered)
+
+			t.Logf("useTextarea=%v raw=%d stripped=%d termH=%d",
+				m.useTextarea, rawLines, strippedLines, tc.termHeight)
+
+			if rawLines > tc.termHeight {
+				t.Errorf("raw line count %d exceeds terminal height %d", rawLines, tc.termHeight)
+			}
+		})
+	}
+}
+
+// TestSecretModal_EditMode_ManyFieldPairs_NoTextarea tests with many field pairs
+// to verify the non-textarea viewportRender path constrains correctly.
+func TestSecretModal_EditMode_ManyFieldPairs_NoTextarea(t *testing.T) {
+	const termHeight = 40
+	const termWidth = 80
+
+	entry := newTestEntry("my-secret", "short-value")
+	m := newEditModalWithDims(entry, termHeight, termWidth)
+
+	// Add many field pairs
+	for i := 0; i < 20; i++ {
+		m.fieldPairs = append(m.fieldPairs, newFieldPair(
+			fmt.Sprintf("key%d", i), fmt.Sprintf("val%d", i)))
+	}
+
+	rendered := m.editModeView("Editing")
+	lines := lineCount(rendered)
+
+	t.Logf("edit mode with 20 field pairs (no textarea): %d lines", lines)
+
+	if lines > termHeight {
+		t.Errorf("edit mode with many fields: %d lines exceeds terminal height %d", lines, termHeight)
+	}
+}
+
+// TestSecretModal_ViewMode_Reveal_LargeValue tests the EXACT user scenario:
+// View mode with a large value, user presses "p" to reveal (unmask) the value.
+// In view mode, revealing a large value shows a truncated multi-line preview.
+// The viewport should constrain this to terminal bounds.
+func TestSecretModal_ViewMode_Reveal_LargeValue(t *testing.T) {
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+		numLines   int
+	}{
+		{"40-line terminal 100-line secret", 40, 80, 100},
+		{"24-line terminal 100-line secret", 24, 80, 100},
+		{"40-line terminal 500-line secret", 40, 80, 500},
+		{"60-line terminal 100-line secret", 60, 200, 100},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := newTestEntry("my-pem-cert", largeSecret(tc.numLines))
+			m := newModalWithDims(entry, tc.termHeight, tc.termWidth)
+
+			// Default state: value is masked.
+			maskedRender := m.viewModeView()
+			maskedLines := strings.Count(maskedRender, "\n") + 1
+			t.Logf("Masked: %d raw lines", maskedLines)
+
+			// Reveal the value (toggle viewMasks[0] to false).
+			m.viewMasks[0] = false
+
+			// Now render with revealed value.
+			revealedRender := m.viewModeView()
+			revealedLines := strings.Count(revealedRender, "\n") + 1
+			revealedStrippedLines := lineCount(revealedRender)
+			t.Logf("Revealed: %d raw lines, %d stripped lines", revealedLines, revealedStrippedLines)
+
+			if revealedLines > tc.termHeight {
+				t.Errorf("View mode (revealed): %d raw lines exceeds terminal height %d",
+					revealedLines, tc.termHeight)
+			}
+
+			// Also test through centerOverlay.
+			centered := m.centerStandalone(revealedRender)
+			centeredLines := strings.Count(centered, "\n") + 1
+			t.Logf("Revealed + centered: %d raw lines", centeredLines)
+
+			if centeredLines > tc.termHeight {
+				t.Errorf("View mode (revealed, centered): %d lines exceeds terminal height %d",
+					centeredLines, tc.termHeight)
+			}
+		})
+	}
+}
+
+// TestSecretModal_ViewMode_Reveal_AllPaths tests all intermediate outputs
+// through the view-mode reveal render path, to pinpoint where overflow occurs.
+func TestSecretModal_ViewMode_Reveal_AllPaths(t *testing.T) {
+	const termHeight = 40
+	const termWidth = 80
+
+	entry := newTestEntry("my-pem-cert", largeSecret(100))
+
+	// Test the FULL path: SecretModal.View() → Model.centerOverlay()
+	parentModel := Model{
+		width:           termWidth,
+		height:          termHeight,
+		showSecretModal: true,
+	}
+
+	sm := NewSecretModalView(entry, nil)
+	sm.width = termWidth
+	sm.height = termHeight
+	sm.initViewport()
+	// Reveal the value.
+	sm.viewMasks[0] = false
+	parentModel.secretModal = sm
+
+	// SecretModal.View() calls viewModeView()
+	modalView := sm.View()
+	modalLines := strings.Count(modalView, "\n") + 1
+	t.Logf("SecretModal.View() (view mode, revealed): %d raw lines", modalLines)
+
+	// Model.View() wraps it in centerOverlay
+	fullView := parentModel.View()
+	fullLines := strings.Count(fullView, "\n") + 1
+	t.Logf("Model.View() (full path): %d raw lines", fullLines)
+
+	if modalLines > termHeight {
+		t.Errorf("SecretModal.View() overflow: %d lines > %d", modalLines, termHeight)
+	}
+	if fullLines > termHeight {
+		t.Errorf("Model.View() overflow: %d lines > %d", fullLines, termHeight)
+	}
+}
+
+// TestDetailScreen_LargeValue_Revealed tests the NON-modal detail screen
+// (screenDetail) when a large value is revealed. This is the screen shown
+// when the user presses Enter on a secret in the list, then Space to peek.
+// THIS IS THE SUSPECTED OVERFLOW PATH.
+func TestDetailScreen_LargeValue_Revealed(t *testing.T) {
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+		numLines   int
+	}{
+		{"40-line terminal 100-line secret", 40, 80, 100},
+		{"24-line terminal 50-line secret", 24, 80, 50},
+		{"60-line terminal 200-line secret", 60, 200, 200},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := vault.SecretEntry{
+				Name:      "my-pem-cert",
+				Value:     largeSecret(tc.numLines),
+				CreatedAt: "2025-01-01T00:00:00Z",
+				UpdatedAt: "2025-01-01T00:00:00Z",
+			}
+
+			m := Model{
+				width:       tc.termWidth,
+				height:      tc.termHeight,
+				screen:      screenDetail,
+				secrets:     []vault.SecretEntry{entry},
+				display:     []vault.SecretEntry{entry},
+				cursor:      0,
+				valueMasked: false, // VALUE IS REVEALED
+			}
+
+			rendered := m.viewDetailScreen()
+			rawLines := strings.Count(rendered, "\n") + 1
+
+			t.Logf("Detail screen (revealed, %d-line value): %d raw lines, terminal height %d",
+				tc.numLines, rawLines, tc.termHeight)
+
+			if rawLines > tc.termHeight {
+				t.Errorf("OVERFLOW: viewDetailScreen() produces %d lines, exceeds terminal height %d (excess: %d lines)",
+					rawLines, tc.termHeight, rawLines-tc.termHeight)
 			}
 		})
 	}
