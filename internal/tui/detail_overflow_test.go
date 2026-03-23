@@ -936,3 +936,239 @@ func TestDetailScreen_NarrowTerminal_NonLargeValue(t *testing.T) {
 		t.Errorf("VISUAL OVERFLOW: %d visual lines exceeds terminal height %d", visualLines, termH)
 	}
 }
+
+// ── truncateToHeight unit tests ──────────────────────────────
+
+// TestTruncateToHeight_Unit tests the truncateToHeight function directly
+// for various edge cases and normal operation.
+func TestTruncateToHeight_Unit(t *testing.T) {
+	cases := []struct {
+		name      string
+		content   string
+		maxHeight int
+		termWidth int
+		wantMax   int // visual line count of result must be <= this
+	}{
+		{
+			name:      "empty string",
+			content:   "",
+			maxHeight: 10,
+			termWidth: 80,
+			wantMax:   0,
+		},
+		{
+			name:      "content fits",
+			content:   "line1\nline2\nline3",
+			maxHeight: 10,
+			termWidth: 80,
+			wantMax:   3,
+		},
+		{
+			name:      "content exceeds maxHeight",
+			content:   "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10",
+			maxHeight: 5,
+			termWidth: 80,
+			wantMax:   5,
+		},
+		{
+			name:      "wrapping line counted correctly",
+			content:   strings.Repeat("X", 200) + "\nshort",
+			maxHeight: 3,
+			termWidth: 80,
+			wantMax:   3,
+		},
+		{
+			name:      "wrapping line too tall for maxHeight",
+			content:   strings.Repeat("Y", 500),
+			maxHeight: 3,
+			termWidth: 80,
+			wantMax:   0, // single line wraps to >3 rows, dropped
+		},
+		{
+			name:      "exact fit",
+			content:   "a\nb\nc\nd\ne",
+			maxHeight: 5,
+			termWidth: 80,
+			wantMax:   5,
+		},
+		{
+			name:      "maxHeight zero",
+			content:   "hello",
+			maxHeight: 0,
+			termWidth: 80,
+			wantMax:   1, // returned unchanged when maxHeight <= 0
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := truncateToHeight(tc.content, tc.maxHeight, tc.termWidth)
+
+			if result == "" {
+				if tc.wantMax != 0 && tc.content != "" {
+					t.Errorf("unexpected empty result")
+				}
+				return
+			}
+
+			visualLines := countVisualLines(result, tc.termWidth)
+			t.Logf("visual lines: %d, wantMax: %d", visualLines, tc.wantMax)
+
+			if visualLines > tc.wantMax {
+				t.Errorf("truncateToHeight produced %d visual lines, want <= %d",
+					visualLines, tc.wantMax)
+			}
+
+			// Also verify it doesn't exceed maxHeight when maxHeight > 0
+			if tc.maxHeight > 0 && visualLines > tc.maxHeight {
+				t.Errorf("truncateToHeight produced %d visual lines, exceeds maxHeight %d",
+					visualLines, tc.maxHeight)
+			}
+		})
+	}
+}
+
+// ── View() safety net integration tests ──────────────────────
+
+// TestView_SafetyNet_DetailOverflow exercises View() (not viewDetailScreen)
+// with a secret that would overflow, verifying the final output's visual
+// line count == m.height. This proves the truncateToHeight safety net works
+// end-to-end through the full View() call path.
+func TestView_SafetyNet_DetailOverflow(t *testing.T) {
+	cases := []struct {
+		name  string
+		termH int
+		termW int
+		value string
+		desc  string
+	}{
+		{
+			name:  "68-line PEM on 15-row terminal",
+			termH: 15,
+			termW: 60,
+			value: largeSecret(68),
+			desc:  "PEM cert with 68 lines should be truncated to 15 rows",
+		},
+		{
+			name:  "2089-char blob on 24-row terminal",
+			termH: 24,
+			termW: 80,
+			value: strings.Repeat("A", 2089),
+			desc:  "Long single-line value should fit in 24 rows",
+		},
+		{
+			name:  "100-line secret on 20-row terminal",
+			termH: 20,
+			termW: 80,
+			value: largeSecret(100),
+			desc:  "100 lines must be truncated to fit in 20 rows",
+		},
+		{
+			name:  "PEM on tiny 10-row terminal",
+			termH: 10,
+			termW: 40,
+			value: largeSecret(50),
+			desc:  "Extreme: 50 lines on 10x40 terminal",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := vault.SecretEntry{
+				Name:      "test-secret",
+				Value:     tc.value,
+				CreatedAt: "2025-01-01T00:00:00Z",
+				UpdatedAt: "2025-01-01T00:00:00Z",
+			}
+
+			m := Model{
+				width:        tc.termW,
+				height:       tc.termH,
+				sizeReceived: true, // Required for View() to render
+				screen:       screenDetail,
+				secrets:      []vault.SecretEntry{entry},
+				display:      []vault.SecretEntry{entry},
+				cursor:       0,
+				valueMasked:  false, // reveal value to force overflow
+			}
+
+			rendered := m.View()
+
+			// Skip empty renders (quitting, no size, etc.)
+			if rendered == "" {
+				t.Skip("View() returned empty — nothing to verify")
+			}
+
+			visualLines := countVisualLines(rendered, tc.termW)
+			t.Logf("%s: visual=%d, maxHeight=%d", tc.desc, visualLines, tc.termH)
+
+			if visualLines > tc.termH {
+				t.Errorf("SAFETY NET FAILED: View() produced %d visual lines, exceeds terminal height %d (excess: %d)",
+					visualLines, tc.termH, visualLines-tc.termH)
+			}
+		})
+	}
+}
+
+// TestView_SafetyNet_OverlayOverflow verifies that the safety net catches
+// overflow from overlay screens (help, generator, info, settings) which
+// go through centerOverlay → lipgloss.Place that doesn't truncate.
+func TestView_SafetyNet_OverlayOverflow(t *testing.T) {
+	// A small terminal where overlays could potentially overflow.
+	const termH, termW = 15, 50
+
+	overlays := []struct {
+		name      string
+		setupFunc func(m *Model)
+	}{
+		{
+			name: "help overlay",
+			setupFunc: func(m *Model) {
+				m.showHelp = true
+			},
+		},
+		{
+			name: "info overlay",
+			setupFunc: func(m *Model) {
+				m.showInfo = true
+				m.vaultInfo = &vault.VaultInfo{
+					Dir:         "/tmp/test",
+					DBPath:      "/tmp/test/vault.db",
+					DBSize:      1024,
+					SecretCount: 5,
+				}
+			},
+		},
+		{
+			name: "settings overlay",
+			setupFunc: func(m *Model) {
+				m.showSettings = true
+			},
+		},
+	}
+
+	for _, tc := range overlays {
+		t.Run(tc.name, func(t *testing.T) {
+			m := Model{
+				width:        termW,
+				height:       termH,
+				sizeReceived: true,
+				screen:       screenList,
+			}
+			tc.setupFunc(&m)
+
+			rendered := m.View()
+			if rendered == "" {
+				t.Skip("View() returned empty")
+			}
+
+			visualLines := countVisualLines(rendered, termW)
+			t.Logf("%s at %dx%d: visual=%d", tc.name, termW, termH, visualLines)
+
+			if visualLines > termH {
+				t.Errorf("SAFETY NET FAILED: %s produced %d visual lines, exceeds terminal height %d",
+					tc.name, visualLines, termH)
+			}
+		})
+	}
+}

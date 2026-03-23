@@ -587,6 +587,68 @@ func runeWidth(s string) int {
 	return utf8.RuneCountInString(s)
 }
 
+// truncateToHeight is a universal safety net that hard-truncates content to
+// fit within maxHeight visual terminal rows at the given termWidth. It splits
+// content by newline, then for each line computes how many visual rows it
+// occupies (accounting for ANSI-styled lines that wrap at termWidth). Once
+// the cumulative visual row count reaches maxHeight, all remaining lines are
+// dropped. This guarantees the returned string never exceeds maxHeight visual
+// rows, regardless of what the upstream screen/overlay function produced.
+//
+// Edge cases:
+//   - Empty string → returned unchanged
+//   - Content shorter than maxHeight → returned unchanged
+//   - ANSI escapes are stripped for width measurement only (output preserves them)
+//   - The last line that fits at the boundary is included fully (not cut mid-line)
+func truncateToHeight(content string, maxHeight int, termWidth int) string {
+	if content == "" || maxHeight <= 0 {
+		return content
+	}
+	if termWidth <= 0 {
+		termWidth = 80
+	}
+
+	lines := strings.Split(content, "\n")
+	visualUsed := 0
+	lastIncluded := -1
+
+	for i, line := range lines {
+		plain := stripANSISeqs(line)
+		w := runeWidth(plain)
+
+		visualRows := 1
+		if w > termWidth {
+			visualRows = (w + termWidth - 1) / termWidth
+		}
+
+		if visualUsed+visualRows > maxHeight {
+			// This line would push us over — stop here.
+			break
+		}
+
+		visualUsed += visualRows
+		lastIncluded = i
+
+		if visualUsed == maxHeight {
+			// Exactly at the limit — include this line but no more.
+			break
+		}
+	}
+
+	if lastIncluded < 0 {
+		// Not even the first line fits (it wraps beyond maxHeight).
+		// Return empty to avoid overflow.
+		return ""
+	}
+
+	if lastIncluded == len(lines)-1 {
+		// All lines fit — return unchanged.
+		return content
+	}
+
+	return strings.Join(lines[:lastIncluded+1], "\n")
+}
+
 // visualLineCount returns how many visual terminal rows the rendered text
 // occupies at the given terminal width, accounting for lines that wrap.
 func visualLineCount(rendered string, termWidth int) int {

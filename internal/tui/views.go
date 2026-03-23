@@ -29,88 +29,62 @@ func (m Model) View() string {
 	}
 
 	// Secret modal takes priority over all other overlays.
+	var s string
+	var screenName string
+
 	if m.showSecretModal {
 		modal := m.secretModal.View()
-		out := m.centerOverlay(modal)
-		if m.debug {
-			lines := strings.Count(out, "\n") + 1
-			if m.debugLog != nil {
-				m.debugLog.LogView("modal", m.width, m.height, m.sizeReceived, lines)
-			}
+		s = m.centerOverlay(modal)
+		screenName = "modal"
+	} else if m.showHelp {
+		s = m.viewHelpOverlay()
+		screenName = "help"
+	} else if m.showGenerator {
+		s = m.viewGeneratorOverlay()
+		screenName = "generator"
+	} else if m.showInfo {
+		s = m.viewInfoOverlay()
+		screenName = "info"
+	} else if m.showSettings {
+		s = m.viewSettingsOverlay()
+		screenName = "settings"
+	} else {
+		switch m.screen {
+		case screenList:
+			s = m.viewListScreen()
+			screenName = "list"
+		case screenDetail:
+			s = m.viewDetailScreen()
+			screenName = "detail"
+		case screenConfirmDelete:
+			s = m.viewConfirmDeleteScreen()
+			screenName = "confirm"
+		default:
+			s = m.viewListScreen()
+			screenName = "list"
 		}
-		return out
-	}
-
-	// Overlays render on top of the current screen.
-	if m.showHelp {
-		out := m.viewHelpOverlay()
-		if m.debug {
-			lines := strings.Count(out, "\n") + 1
-			if m.debugLog != nil {
-				m.debugLog.LogView("help", m.width, m.height, m.sizeReceived, lines)
-			}
-		}
-		return out
-	}
-	if m.showGenerator {
-		out := m.viewGeneratorOverlay()
-		if m.debug {
-			lines := strings.Count(out, "\n") + 1
-			if m.debugLog != nil {
-				m.debugLog.LogView("generator", m.width, m.height, m.sizeReceived, lines)
-			}
-		}
-		return out
-	}
-	if m.showInfo {
-		out := m.viewInfoOverlay()
-		if m.debug {
-			lines := strings.Count(out, "\n") + 1
-			if m.debugLog != nil {
-				m.debugLog.LogView("info", m.width, m.height, m.sizeReceived, lines)
-			}
-		}
-		return out
-	}
-	if m.showSettings {
-		out := m.viewSettingsOverlay()
-		if m.debug {
-			lines := strings.Count(out, "\n") + 1
-			if m.debugLog != nil {
-				m.debugLog.LogView("settings", m.width, m.height, m.sizeReceived, lines)
-			}
-		}
-		return out
-	}
-
-	var s string
-	switch m.screen {
-	case screenList:
-		s = m.viewListScreen()
-	case screenDetail:
-		s = m.viewDetailScreen()
-	case screenConfirmDelete:
-		s = m.viewConfirmDeleteScreen()
-	default:
-		s = m.viewListScreen()
 	}
 
 	// Debug logging and debug bar overlay.
 	if m.debug {
 		lines := strings.Count(s, "\n") + 1
-		screenName := "list"
-		switch m.screen {
-		case screenDetail:
-			screenName = "detail"
-		case screenConfirmDelete:
-			screenName = "confirm"
-		}
 		if m.debugLog != nil {
 			m.debugLog.LogView(screenName, m.width, m.height, m.sizeReceived, lines)
 		}
 		// Prepend a debug status bar at the very top of the output.
 		debugBar := m.debugStatusBar(lines)
 		s = debugBar + "\n" + s
+	}
+
+	// ── Universal height safety net ──────────────────────────
+	// truncateToHeight is the final guarantee that output never exceeds
+	// the terminal height. Individual screens and overlays do their best
+	// to fit content (viewportRender, wrapAllLines, etc.), but
+	// lipgloss.Place() doesn't truncate tall content, and edge cases in
+	// height arithmetic can slip through. This hard-truncates the output
+	// to m.height visual rows as a last resort.
+	if m.sizeReceived {
+		s = truncateToHeight(s, m.height, m.width)
 	}
 
 	return s
