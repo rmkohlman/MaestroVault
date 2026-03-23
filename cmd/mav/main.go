@@ -114,6 +114,7 @@ The master key is stored securely in the macOS Keychain.`,
 		newServeCmd(),
 		newTokenCmd(),
 		newTouchIDCmd(),
+		newDebugTUICmd(),
 	)
 
 	return root

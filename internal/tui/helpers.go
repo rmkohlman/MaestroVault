@@ -510,6 +510,67 @@ func wrapAndTruncate(value string, width, maxLines int) (string, int) {
 	return strings.Join(lines, "\n"), total
 }
 
+// wrapAllLines splits content by newlines and wraps any line whose visual
+// width (after stripping ANSI escape sequences) exceeds maxWidth. This
+// ensures every newline-delimited line occupies at most 1 visual terminal
+// row, making newline count == visual row count. ANSI sequences are
+// preserved — the wrap points are computed on the plain text but the
+// original styled text is sliced at the corresponding byte offsets.
+func wrapAllLines(content string, maxWidth int) string {
+	if maxWidth <= 0 {
+		maxWidth = 80
+	}
+	lines := strings.Split(content, "\n")
+	var result []string
+	for _, line := range lines {
+		plain := stripANSISeqs(line)
+		if runeWidth(plain) <= maxWidth {
+			result = append(result, line)
+			continue
+		}
+		// This line exceeds maxWidth visually. We need to wrap it.
+		// Strategy: walk the original string rune-by-rune, tracking
+		// visual column position (skip ANSI escapes). When we hit
+		// maxWidth visual columns, emit a line break.
+		var current strings.Builder
+		visualCol := 0
+		inEscape := false
+		for i := 0; i < len(line); {
+			if line[i] == '\x1b' && i+1 < len(line) && line[i+1] == '[' {
+				// Start of ANSI CSI sequence — copy until the terminator.
+				inEscape = true
+				current.WriteByte(line[i])
+				i++
+				continue
+			}
+			if inEscape {
+				current.WriteByte(line[i])
+				// CSI sequences end with a letter (a-zA-Z).
+				if (line[i] >= 'a' && line[i] <= 'z') || (line[i] >= 'A' && line[i] <= 'Z') {
+					inEscape = false
+				}
+				i++
+				continue
+			}
+			// Regular rune — count it toward visual width.
+			r, size := utf8.DecodeRuneInString(line[i:])
+			if visualCol >= maxWidth {
+				result = append(result, current.String())
+				current.Reset()
+				visualCol = 0
+			}
+			current.WriteRune(r)
+			_ = size
+			visualCol++
+			i += size
+		}
+		if current.Len() > 0 {
+			result = append(result, current.String())
+		}
+	}
+	return strings.Join(result, "\n")
+}
+
 // ── ANSI / visual width helpers ──────────────────────────────
 
 // ansiSeqRe matches ANSI CSI escape sequences.

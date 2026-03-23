@@ -403,6 +403,15 @@ func (m Model) viewDetailScreen() string {
 
 	bodyStr := strings.TrimRight(body.String(), "\n")
 
+	// ── Pre-wrap ALL body lines to terminal width ─────────────
+	// viewportRender() constrains output by newline-delimited line
+	// count, but availableHeight is in visual terminal rows. If any
+	// body line exceeds terminal width, the terminal wraps it to extra
+	// visual rows not accounted for by viewportRender(). Pre-wrapping
+	// ensures every newline-delimited line is ≤ 1 visual row, making
+	// newline count == visual row count.
+	bodyStr = wrapAllLines(bodyStr, w)
+
 	// ── Compose with viewport constraint ──────────────────────
 	// Use visual line count (accounting for terminal wrapping) rather
 	// than raw newline count. Lines wider than the terminal width wrap

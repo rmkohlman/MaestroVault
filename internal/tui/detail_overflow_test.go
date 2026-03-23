@@ -714,3 +714,225 @@ func TestDetailScreen_TinyTerminal_ScrolledDown(t *testing.T) {
 		})
 	}
 }
+
+// ── wrapAllLines tests ───────────────────────────────────────
+
+// TestWrapAllLines_Basic verifies that wrapAllLines correctly splits
+// long lines at the maxWidth boundary while preserving short lines.
+func TestWrapAllLines_Basic(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		maxWidth int
+		wantMax  int // max visual width of any output line
+	}{
+		{
+			"short line unchanged",
+			"hello world",
+			80,
+			11,
+		},
+		{
+			"exact width unchanged",
+			strings.Repeat("A", 80),
+			80,
+			80,
+		},
+		{
+			"long line wrapped",
+			strings.Repeat("B", 150),
+			80,
+			80,
+		},
+		{
+			"multi-line mixed",
+			"short\n" + strings.Repeat("C", 200) + "\nalso short",
+			80,
+			80,
+		},
+		{
+			"empty lines preserved",
+			"hello\n\nworld",
+			80,
+			5,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := wrapAllLines(tc.input, tc.maxWidth)
+			for i, line := range strings.Split(result, "\n") {
+				plain := stripANSI(line)
+				w := utf8.RuneCountInString(plain)
+				if w > tc.maxWidth {
+					t.Errorf("line %d: visual width %d exceeds maxWidth %d: %s",
+						i, w, tc.maxWidth, truncateStr(plain, 60))
+				}
+			}
+		})
+	}
+}
+
+// TestDetailScreen_NonLargeValue_150Chars_Width80 is the specific test
+// required by Issue #15: a 150-character secret value (no newlines,
+// under largeValueThreshold) on an 80-column terminal. Before the fix,
+// the line "  Value: " + 150 chars = 159 runes would wrap to 2 visual
+// lines but viewportRender counted it as 1, causing overflow.
+func TestDetailScreen_NonLargeValue_150Chars_Width80(t *testing.T) {
+	const termH, termW = 24, 80
+
+	// 150-char value — NOT large (< largeValueThreshold=200), no newlines.
+	value150 := strings.Repeat("X", 150)
+	if isLargeValue(value150) {
+		t.Fatalf("150-char value should NOT be classified as large (threshold=%d)", largeValueThreshold)
+	}
+
+	entry := vault.SecretEntry{
+		Name:      "api-key-medium",
+		Value:     value150,
+		CreatedAt: "2025-01-15T10:30:00Z",
+		UpdatedAt: "2025-01-15T10:30:00Z",
+	}
+
+	m := Model{
+		width:       termW,
+		height:      termH,
+		screen:      screenDetail,
+		secrets:     []vault.SecretEntry{entry},
+		display:     []vault.SecretEntry{entry},
+		cursor:      0,
+		valueMasked: false, // value revealed
+	}
+
+	rendered := m.viewDetailScreen()
+	rawLinesList := strings.Split(rendered, "\n")
+	rawLines := len(rawLinesList)
+
+	// Assertion 1: No line has visual width > 80.
+	for i, line := range rawLinesList {
+		plain := stripANSI(line)
+		w := utf8.RuneCountInString(plain)
+		if w > termW {
+			t.Errorf("LINE %d: visual width %d exceeds terminal width %d: %.80s...",
+				i, w, termW, plain)
+		}
+	}
+
+	// Assertion 2: Total visual lines <= m.height.
+	visualLines := countVisualLines(rendered, termW)
+	t.Logf("150-char value at %dx%d: raw=%d, visual=%d", termW, termH, rawLines, visualLines)
+
+	if visualLines > termH {
+		t.Errorf("VISUAL OVERFLOW: %d visual lines exceeds terminal height %d", visualLines, termH)
+	}
+
+	// Assertion 3: Raw line count <= m.height (since we pre-wrap, raw==visual).
+	if rawLines > termH {
+		t.Errorf("RAW OVERFLOW: %d raw lines exceeds terminal height %d", rawLines, termH)
+	}
+}
+
+// TestDetailScreen_NonLargeValue_WithMetadata_Width80 tests wrapping
+// of metadata lines and non-large field values that can also exceed
+// terminal width.
+func TestDetailScreen_NonLargeValue_WithMetadata_Width80(t *testing.T) {
+	const termH, termW = 24, 80
+
+	// 150-char value (non-large) + long metadata + fields
+	value := strings.Repeat("V", 150)
+
+	entry := vault.SecretEntry{
+		Name:        "complex-secret",
+		Environment: "production",
+		Value:       value,
+		Metadata: map[string]any{
+			"description": "This is a very long description that goes on and on and might exceed terminal width easily",
+			"team":        "platform-engineering",
+			"region":      "us-west-2",
+		},
+		Fields: map[string]string{
+			"username": strings.Repeat("U", 100), // 100-char username, "    username: " + 100 = 114 chars
+			"host":     "short",
+		},
+		CreatedAt: "2025-01-15T10:30:00Z",
+		UpdatedAt: "2025-01-15T10:30:00Z",
+	}
+
+	m := Model{
+		width:       termW,
+		height:      termH,
+		screen:      screenDetail,
+		secrets:     []vault.SecretEntry{entry},
+		display:     []vault.SecretEntry{entry},
+		cursor:      0,
+		valueMasked: false,
+	}
+
+	rendered := m.viewDetailScreen()
+	rawLinesList := strings.Split(rendered, "\n")
+
+	overflowCount := 0
+	for i, line := range rawLinesList {
+		plain := stripANSI(line)
+		w := utf8.RuneCountInString(plain)
+		if w > termW {
+			overflowCount++
+			t.Errorf("LINE %d: visual width %d exceeds terminal width %d: %.80s...",
+				i, w, termW, plain)
+		}
+	}
+
+	visualLines := countVisualLines(rendered, termW)
+	t.Logf("Complex secret at %dx%d: raw=%d, visual=%d, overflow_lines=%d",
+		termW, termH, len(rawLinesList), visualLines, overflowCount)
+
+	if visualLines > termH {
+		t.Errorf("VISUAL OVERFLOW: %d visual lines exceeds terminal height %d", visualLines, termH)
+	}
+}
+
+// TestDetailScreen_NarrowTerminal_NonLargeValue tests a non-large value
+// on a very narrow terminal (width=40) where even moderate-length values
+// would wrap without pre-wrapping.
+func TestDetailScreen_NarrowTerminal_NonLargeValue(t *testing.T) {
+	const termH, termW = 30, 40
+
+	// 80-char value — not large, but exceeds width=40 with "  Value: " prefix (89 chars).
+	value := strings.Repeat("N", 80)
+
+	entry := vault.SecretEntry{
+		Name:      "narrow-test",
+		Value:     value,
+		CreatedAt: "2025-01-15T10:30:00Z",
+		UpdatedAt: "2025-01-15T10:30:00Z",
+	}
+
+	m := Model{
+		width:       termW,
+		height:      termH,
+		screen:      screenDetail,
+		secrets:     []vault.SecretEntry{entry},
+		display:     []vault.SecretEntry{entry},
+		cursor:      0,
+		valueMasked: false,
+	}
+
+	rendered := m.viewDetailScreen()
+	rawLinesList := strings.Split(rendered, "\n")
+
+	for i, line := range rawLinesList {
+		plain := stripANSI(line)
+		w := utf8.RuneCountInString(plain)
+		if w > termW {
+			t.Errorf("LINE %d: visual width %d exceeds terminal width %d: %.40s...",
+				i, w, termW, plain)
+		}
+	}
+
+	visualLines := countVisualLines(rendered, termW)
+	t.Logf("Non-large value at %dx%d: raw=%d, visual=%d", termW, termH, len(rawLinesList), visualLines)
+
+	if visualLines > termH {
+		t.Errorf("VISUAL OVERFLOW: %d visual lines exceeds terminal height %d", visualLines, termH)
+	}
+}
