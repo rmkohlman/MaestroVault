@@ -227,7 +227,7 @@ func (m Model) viewDetailScreen() string {
 	}
 	header.WriteString("\n")
 	header.WriteString(dividerLine(w))
-	headerStr := header.String()
+	headerStr := strings.TrimRight(header.String(), "\n")
 
 	// ── Footer (fixed) ────────────────────────────────────────
 	var footer strings.Builder
@@ -253,7 +253,7 @@ func (m Model) viewDetailScreen() string {
 			"q", "quit",
 		))
 	}
-	footerStr := footer.String()
+	footerStr := strings.TrimLeft(footer.String(), "\n")
 
 	// ── Body (scrollable) ─────────────────────────────────────
 	var body strings.Builder
@@ -343,10 +343,17 @@ func (m Model) viewDetailScreen() string {
 	bodyStr := strings.TrimRight(body.String(), "\n")
 
 	// ── Compose with viewport constraint ──────────────────────
-	headerLines := strings.Count(headerStr, "\n") + 1
-	footerLines := strings.Count(footerStr, "\n") + 1
-	// +2 for the blank lines between header/body and body/footer.
-	availableHeight := h - headerLines - footerLines - 2
+	// Use visual line count (accounting for terminal wrapping) rather
+	// than raw newline count. Lines wider than the terminal width wrap
+	// to extra visual rows — we must account for this or the body gets
+	// too many lines and the output overflows the terminal.
+	headerVisual := visualLineCount(headerStr, w)
+	footerVisual := visualLineCount(footerStr, w)
+	// +2 for the "\n" separators between header→body and body→footer in
+	// the final composition. These separators each consume a visual row
+	// because they terminate the last line of the preceding section and
+	// start the first line of the next section on its own row.
+	availableHeight := h - headerVisual - footerVisual - 2
 	if availableHeight < 3 {
 		availableHeight = 3
 	}

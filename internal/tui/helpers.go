@@ -2,8 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rmkohlman/MaestroVault/internal/vault"
 )
@@ -17,7 +19,29 @@ func (m Model) helpBar(pairs ...string) string {
 			HelpKeyStyle.Render(pairs[i])+" "+HelpDescStyle.Render(pairs[i+1]),
 		)
 	}
-	return MutedStyle.Render("  ") + strings.Join(parts, MutedStyle.Render("  ·  "))
+
+	// Build the full bar and check if it fits within terminal width.
+	// If it doesn't, progressively remove trailing items until it fits.
+	// This prevents the help bar from wrapping to a second visual line,
+	// which breaks the height calculations in viewDetailScreen et al.
+	sep := MutedStyle.Render("  ·  ")
+	prefix := MutedStyle.Render("  ")
+	maxWidth := m.width
+	if maxWidth <= 0 {
+		maxWidth = 80
+	}
+
+	for len(parts) > 0 {
+		bar := prefix + strings.Join(parts, sep)
+		// Measure visual width: strip ANSI escapes and count runes.
+		if runeWidth(stripANSISeqs(bar)) <= maxWidth {
+			return bar
+		}
+		// Drop the last item and try again.
+		parts = parts[:len(parts)-1]
+	}
+
+	return prefix
 }
 
 // vimHelpBar returns context-sensitive help for the current vim mode/screen.
@@ -385,6 +409,10 @@ func isLargeValue(v string) bool {
 // When targetLine < 0, uses scrollOffset directly (useful for manual
 // scroll like help overlay).
 func viewportRender(content string, maxVisible, scrollOffset, targetLine int) (string, int) {
+	if maxVisible <= 0 {
+		maxVisible = 1
+	}
+
 	lines := strings.Split(content, "\n")
 	total := len(lines)
 
@@ -419,20 +447,29 @@ func viewportRender(content string, maxVisible, scrollOffset, targetLine int) (s
 	visible := lines[scrollOffset:end]
 	var b strings.Builder
 
-	// Top scroll indicator.
+	// Top scroll indicator — replaces the first visible line so total
+	// height stays constant.
 	if scrollOffset > 0 {
-		b.WriteString(MutedStyle.Render("  ▲ " + fmt.Sprintf("%d more lines above", scrollOffset)))
+		aboveHidden := scrollOffset + 1 // lines before window + displaced first line
+		b.WriteString(MutedStyle.Render("  ▲ " + fmt.Sprintf("%d more lines above", aboveHidden)))
 		b.WriteString("\n")
-		// Replace the first visible line with the indicator, so total height stays constant.
 		visible = visible[1:]
+	}
+
+	// Bottom scroll indicator — replaces the last visible line so total
+	// height stays constant (fixes off-by-one when both ▲ and ▼ appear).
+	remaining := total - end
+	if remaining > 0 && len(visible) > 0 {
+		visible = visible[:len(visible)-1]
+		remaining++ // the displaced line is also not shown
 	}
 
 	b.WriteString(strings.Join(visible, "\n"))
 
-	// Bottom scroll indicator.
-	remaining := total - end
 	if remaining > 0 {
-		b.WriteString("\n")
+		if len(visible) > 0 || scrollOffset > 0 {
+			b.WriteString("\n")
+		}
 		b.WriteString(MutedStyle.Render("  ▼ " + fmt.Sprintf("%d more lines below", remaining)))
 	}
 
@@ -471,4 +508,39 @@ func wrapAndTruncate(value string, width, maxLines int) (string, int) {
 		lines = lines[:maxLines]
 	}
 	return strings.Join(lines, "\n"), total
+}
+
+// ── ANSI / visual width helpers ──────────────────────────────
+
+// ansiSeqRe matches ANSI CSI escape sequences.
+var ansiSeqRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// stripANSISeqs removes ANSI escape sequences from s.
+func stripANSISeqs(s string) string {
+	return ansiSeqRe.ReplaceAllString(s, "")
+}
+
+// runeWidth returns the number of runes in s (visual column count for
+// ASCII / single-width characters).
+func runeWidth(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+// visualLineCount returns how many visual terminal rows the rendered text
+// occupies at the given terminal width, accounting for lines that wrap.
+func visualLineCount(rendered string, termWidth int) int {
+	if termWidth <= 0 {
+		termWidth = 80
+	}
+	total := 0
+	for _, line := range strings.Split(rendered, "\n") {
+		plain := stripANSISeqs(line)
+		w := runeWidth(plain)
+		if w <= termWidth {
+			total++
+		} else {
+			total += (w + termWidth - 1) / termWidth
+		}
+	}
+	return total
 }

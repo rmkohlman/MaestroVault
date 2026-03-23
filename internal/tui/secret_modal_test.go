@@ -789,6 +789,237 @@ func TestDetailScreen_SingleLongLine_Revealed(t *testing.T) {
 	}
 }
 
+// TestDetailScreen_RealCertChain_3Section tests the exact user scenario from
+// issue testing: a real OpenSSL-generated 3-section PEM certificate chain
+// (root CA → intermediate CA → leaf cert) stored in mav and rendered in the
+// detail screen with value revealed. This is a 63-line, ~3800-char PEM file.
+func TestDetailScreen_RealCertChain_3Section(t *testing.T) {
+	// Real 3-section PEM certificate chain (leaf + intermediate + root).
+	certChain := `-----BEGIN CERTIFICATE-----
+MIIDfDCCAmSgAwIBAgIUHSqasWOWU8l2tFEljEcv21Ggv18wDQYJKoZIhvcNAQEL
+BQAwXjELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExGzAZBgNVBAoM
+ElRlc3RJbnRlcm1lZGlhdGVDQTEdMBsGA1UEAwwUVGVzdCBJbnRlcm1lZGlhdGUg
+Q0EwHhcNMjYwMzIzMTYxMTU4WhcNMjcwMzIzMTYxMTU4WjBOMQswCQYDVQQGEwJV
+UzETMBEGA1UECAwKQ2FsaWZvcm5pYTEQMA4GA1UECgwHVGVzdEFwcDEYMBYGA1UE
+AwwPYXBwLmV4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+AQEAyyyPTQjG+PwBQIauabLx5Pu/5Dt3SSvTbdmdyjwZ+dS2HQtlPxeiRBLcHR1H
+u+bfPKK33DKLRrlpyw6KWbx9j9G1oe1vNmDf0MqtM+Cayh9NK//F0D8LPMPfrEOM
+CEMcyYCIl82MpF06HD178qRfVv/z9R0s7pLO8U/tpJBa5DHVCBZbD4YBIA/6OZCI
+tJ+kx1oJsIU+7pUGjgtmbDf9Ijp7KHl9HsU2jgGmQox988Mftqyg79REeqhLXc5w
+Q7TMrA2Vb6haR9MphoSLC2ZFARRjiXMkN9o8rpifBuUDf4EPamYfbfWBTqWmNmxa
+nPV4jiCaczJI/S4O+J6Btij8EwIDAQABo0IwQDAdBgNVHQ4EFgQUpQG3Ul8mKanS
+yqpXUb6d/CMfFwUwHwYDVR0jBBgwFoAUomoPkqWwXwjD5Rt6K6QgBAj4eacwDQYJ
+KoZIhvcNAQELBQADggEBAB+X0avSryRlbLtW8QNNJi219R5K8+AnFNeQh8noScMD
+viInMk0D325grP2J9xchXN0rrPP2WNXlFJH1l72JqxVl1b5DMPn5yC9uSkF2wSJb
+zD92cEmqqJ3mGmJBSO4Xkepfcz3iNLnE6+aQbVc/eBvLpt9N3TZxIgve9FrUten7
+UktYeES6JUGNaAvQZbGus2OhFZ98wSIn+sdL75soR63/LwziJV0MKcpGUKq+zgNb
+l46hzh8Gy5Zp2q+QTIiqBBIQ923Fnl2Y016KNqaYp2kBl+7VJsbNpe1xKvI86s2J
++hpxY3ULq7gbdi64UbvN2thqWT0GKXxR/HG4/07RQKQ=
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDfDCCAmSgAwIBAgIUZXTspEGdy2jNYl7P7wnQwK6zLTUwDQYJKoZIhvcNAQEL
+BQAwTjELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExEzARBgNVBAoM
+ClRlc3RSb290Q0ExFTATBgNVBAMMDFRlc3QgUm9vdCBDQTAeFw0yNjAzMjMxNjEx
+NThaFw0yNzAzMjMxNjExNThaMF4xCzAJBgNVBAYTAlVTMRMwEQYDVQQIDApDYWxp
+Zm9ybmlhMRswGQYDVQQKDBJUZXN0SW50ZXJtZWRpYXRlQ0ExHTAbBgNVBAMMFFRl
+c3QgSW50ZXJtZWRpYXRlIENBMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+AQEAxehoULi6PPhwHJirPbr4la7KfjCnHci+EAMOZKX65N/CXDRE73rBY04zQEWI
+hsybMrsnGjEgFrUHBaoiMLhEThyzQY4im6sbX9W1X0d4+JPXPguDf7zCGmmhYVtw
+VMkVMMXf1cb8D/VRnnUoKc7wYqKKpwKmPdka0qeAxh0rdP8u0abH/AnrxbYeBcHb
+ifOoZKBSyYQpB/OtZ5ix1lWynK7MH/Rp4KbRLyCcniV2bDZQRyRsUdVePv4k4HLS
+UE7s9kbGTosBRtzDxfbv56h6kmmsiQCHhd+lIQ/6W0Nm8WbMhwFm5pU2sgITKegb
+P/LFJzBPXQD1xdL3bNeDZ9HMHwIDAQABo0IwQDAdBgNVHQ4EFgQUomoPkqWwXwjD
+5Rt6K6QgBAj4eacwHwYDVR0jBBgwFoAUufvrSDY8wwLQ9QXXxpzWEkRkeKEwDQYJ
+KoZIhvcNAQELBQADggEBAGozUJDte/iEuWWsDyx0AXNEU5x4UZqbm/d+CgudZ8oA
+qS6zKkmXhF25unDMLdZJRCuMmFQdS9MxsDvzcH14tDVJi7up5GoY6m1uFokRvXLP
+cb/mYdweSUrLjDvfdyAVpt2TGSqUr+aJRtKtPkq0V/dRFNxO/+wlGdb0wLdweQYT
+uzeXDrj5/peHELWQDwqv4gVd1IyLv5aIgyfKrui/uUhxRCzbAemZOPxzDb9l7qwH
+Stzi6Kv9fzGQpkFs5WYRVLKSKjmcalcUknRrdDIdfe6uzg3w0TpAPYrZ7bKll5Sb
+ug6hs+ooDwBd/dlIUeqfNglvXRfuliJUiNZIEGUdT/I=
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDfTCCAmWgAwIBAgIURcYbsC7gRiggTAy2hvjp1COIVEkwDQYJKoZIhvcNAQEL
+BQAwTjELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExEzARBgNVBAoM
+ClRlc3RSb290Q0ExFTATBgNVBAMMDFRlc3QgUm9vdCBDQTAeFw0yNjAzMjMxNjEx
+NThaFw0yNzAzMjMxNjExNThaME4xCzAJBgNVBAYTAlVTMRMwEQYDVQQIDApDYWxp
+Zm9ybmlhMRMwEQYDVQQKDApUZXN0Um9vdENBMRUwEwYDVQQDDAxUZXN0IFJvb3Qg
+Q0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCoCdqyJJhxASTSzhA4
+Mkjk7w7t40GfiSEfFSztJ4BQR2csMs2pi4KCzskhMT3L3Uj03yfoMYLe2+87KSQb
+HchTELQF7jIuPgoEk9HUqhR7hmn+K05FEtt0XefwnoBgm4zQw49mEknfezaVvjQ4
+E0NJ4y39HO5M74Jz2x4FlAOCQ1VQcEdiu/yVE/xp0khF/Secq6NpXabEazkQsTp9
+ZXAp50b97uM5ZwB3D2EuEx2GhnZal9LgTB4KxzC+iYUDDoLjI85HiyvmCA4SRA6U
+wP1XGyygiqpcLqkIA42CwFaulsMFZbLmQjLGGV8Fij7kcBnh3LKaAf3kkks1uz8p
+1w2xAgMBAAGjUzBRMB0GA1UdDgQWBBS5++tINjzDAtD1BdfGnNYSRGR4oTAfBgNV
+HSMEGDAWgBS5++tINjzDAtD1BdfGnNYSRGR4oTAPBgNVHRMBAf8EBTADAQH/MA0G
+CSqGSIb3DQEBCwUAA4IBAQAZzQn2eUcqoG8kUqD/gHhOwOUujjMPgMPA7Fa5RnL0
+liPcf/alLVnJ/YLX54bdJe5KR66C5KWFf1jH3mFS8lPWjANZNSkG6TC7jE96Bzn/
+59WlinRoE26axnoYsp2wi1WdXhBQCkpga4ozsEbvC6xXzf7OT9Vu6fPvhkqc9miJ
+6CXAmLNIsG94ZP/FP6W0+2yScKO/Nf1wXdQq3VFjdd+ywwtBUrstqF5nYxMWtk6p
+coB5oJhehTBc8+R0pMXL4WZ9Z8KuWrm9qvhJKfb3FBOq0ZIw/27/jF0JxWeKshjX
+y8S9L9EIiVV7JIjfAjWJTr1pF7VQxyLmun9CYSF/TUE8
+-----END CERTIFICATE-----`
+
+	certLines := strings.Count(certChain, "\n") + 1
+	certChars := len(certChain)
+	certSections := strings.Count(certChain, "-----BEGIN CERTIFICATE-----")
+	t.Logf("Certificate chain: %d lines, %d chars, %d sections", certLines, certChars, certSections)
+
+	if certSections != 3 {
+		t.Fatalf("expected 3 certificate sections, got %d", certSections)
+	}
+
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+	}{
+		{"40 rows x 80 cols (small terminal)", 40, 80},
+		{"24 rows x 80 cols (minimal terminal)", 24, 80},
+		{"60 rows x 120 cols (large terminal)", 60, 120},
+		{"30 rows x 100 cols (medium terminal)", 30, 100},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := vault.SecretEntry{
+				Name:      "test-cert-chain",
+				Value:     certChain,
+				CreatedAt: "2025-01-01T00:00:00Z",
+				UpdatedAt: "2025-01-01T00:00:00Z",
+			}
+
+			// ── Detail screen (screenDetail) with revealed value ──
+			m := Model{
+				width:       tc.termWidth,
+				height:      tc.termHeight,
+				screen:      screenDetail,
+				secrets:     []vault.SecretEntry{entry},
+				display:     []vault.SecretEntry{entry},
+				cursor:      0,
+				valueMasked: false, // VALUE REVEALED
+			}
+
+			rendered := m.viewDetailScreen()
+			rawLines := strings.Count(rendered, "\n") + 1
+
+			t.Logf("Detail screen (revealed cert chain): %d raw lines, terminal %dx%d",
+				rawLines, tc.termWidth, tc.termHeight)
+
+			if rawLines > tc.termHeight {
+				t.Errorf("OVERFLOW: viewDetailScreen() produces %d lines, exceeds terminal height %d (excess: %d)",
+					rawLines, tc.termHeight, rawLines-tc.termHeight)
+			}
+
+			// ── Full Model.View() path ──
+			fullRendered := m.View()
+			fullRawLines := strings.Count(fullRendered, "\n") + 1
+
+			t.Logf("Full Model.View(): %d raw lines", fullRawLines)
+
+			if fullRawLines > tc.termHeight {
+				t.Errorf("OVERFLOW: Model.View() produces %d lines, exceeds terminal height %d",
+					fullRawLines, tc.termHeight)
+			}
+
+			// ── Detail screen with masked value (should be trivially small) ──
+			m.valueMasked = true
+			maskedRendered := m.viewDetailScreen()
+			maskedLines := strings.Count(maskedRendered, "\n") + 1
+
+			t.Logf("Detail screen (masked): %d raw lines", maskedLines)
+
+			if maskedLines > tc.termHeight {
+				t.Errorf("OVERFLOW: masked viewDetailScreen() produces %d lines, exceeds terminal height %d",
+					maskedLines, tc.termHeight)
+			}
+		})
+	}
+}
+
+// TestSecretModal_ViewMode_RealCertChain tests the SecretModal view mode
+// with a real 3-section PEM cert chain — both masked and revealed states.
+func TestSecretModal_ViewMode_RealCertChain(t *testing.T) {
+	certChain := `-----BEGIN CERTIFICATE-----
+MIIDfDCCAmSgAwIBAgIUHSqasWOWU8l2tFEljEcv21Ggv18wDQYJKoZIhvcNAQEL
+BQAwXjELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExGzAZBgNVBAoM
+ElRlc3RJbnRlcm1lZGlhdGVDQTEdMBsGA1UEAwwUVGVzdCBJbnRlcm1lZGlhdGUg
+Q0EwHhcNMjYwMzIzMTYxMTU4WhcNMjcwMzIzMTYxMTU4WjBOMQswCQYDVQQGEwJV
+UzETMBEGA1UECAwKQ2FsaWZvcm5pYTEQMA4GA1UECgwHVGVzdEFwcDEYMBYGA1UE
+AwwPYXBwLmV4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+AQEAyyyPTQjG+PwBQIauabLx5Pu/5Dt3SSvTbdmdyjwZ+dS2HQtlPxeiRBLcHR1H
+u+bfPKK33DKLRrlpyw6KWbx9j9G1oe1vNmDf0MqtM+Cayh9NK//F0D8LPMPfrEOM
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDfDCCAmSgAwIBAgIUZXTspEGdy2jNYl7P7wnQwK6zLTUwDQYJKoZIhvcNAQEL
+BQAwTjELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExEzARBgNVBAoM
+ClRlc3RSb290Q0ExFTATBgNVBAMMDFRlc3QgUm9vdCBDQTAeFw0yNjAzMjMxNjEx
+NThaFw0yNzAzMjMxNjExNThaMF4xCzAJBgNVBAYTAlVTMRMwEQYDVQQIDApDYWxp
+Zm9ybmlhMRswGQYDVQQKDBJUZXN0SW50ZXJtZWRpYXRlQ0ExHTAbBgNVBAMMFFRl
+c3QgSW50ZXJtZWRpYXRlIENBMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDfTCCAmWgAwIBAgIURcYbsC7gRiggTAy2hvjp1COIVEkwDQYJKoZIhvcNAQEL
+BQAwTjELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExEzARBgNVBAoM
+ClRlc3RSb290Q0ExFTATBgNVBAMMDFRlc3QgUm9vdCBDQTAeFw0yNjAzMjMxNjEx
+NThaFw0yNzAzMjMxNjExNThaME4xCzAJBgNVBAYTAlVTMRMwEQYDVQQIDApDYWxp
+Zm9ybmlhMRMwEQYDVQQKDApUZXN0Um9vdENBMRUwEwYDVQQDDAxUZXN0IFJvb3Qg
+Q0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCoCdqyJJhxASTSzhA4
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=
+-----END CERTIFICATE-----`
+
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+	}{
+		{"40x80", 40, 80},
+		{"24x80", 24, 80},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := newTestEntry("test-cert-chain", certChain)
+			entry.CreatedAt = "2025-01-01T00:00:00Z"
+			entry.UpdatedAt = "2025-01-01T00:00:00Z"
+
+			// View mode modal — masked (default).
+			m := newModalWithDims(entry, tc.termHeight, tc.termWidth)
+			rendered := m.viewModeView()
+			rawLines := strings.Count(rendered, "\n") + 1
+
+			t.Logf("SecretModal view (masked): %d raw lines, terminal %dx%d",
+				rawLines, tc.termWidth, tc.termHeight)
+
+			if rawLines > tc.termHeight {
+				t.Errorf("OVERFLOW (masked modal): %d lines > %d", rawLines, tc.termHeight)
+			}
+
+			// View mode modal — revealed.
+			m.viewMasks[0] = false
+			revealedRender := m.viewModeView()
+			revealedLines := strings.Count(revealedRender, "\n") + 1
+
+			t.Logf("SecretModal view (revealed): %d raw lines", revealedLines)
+
+			if revealedLines > tc.termHeight {
+				t.Errorf("OVERFLOW (revealed modal): %d lines > %d", revealedLines, tc.termHeight)
+			}
+
+			// Centered (standalone) path.
+			centered := m.centerStandalone(revealedRender)
+			centeredLines := strings.Count(centered, "\n") + 1
+
+			t.Logf("SecretModal centered (revealed): %d raw lines", centeredLines)
+
+			if centeredLines > tc.termHeight {
+				t.Errorf("OVERFLOW (centered modal): %d lines > %d", centeredLines, tc.termHeight)
+			}
+		})
+	}
+}
+
 // TestDetailScreen_FullModelView_AllValueTypes tests the complete Model.View()
 // path for screenDetail with various value shapes: multi-line, single long line,
 // short value, and fields with large values.
