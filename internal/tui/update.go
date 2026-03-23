@@ -16,8 +16,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
+		firstTime := !m.sizeReceived
+		m.sizeReceived = true
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.debugLog != nil {
+			m.debugLog.LogWindowSize(msg.Width, msg.Height, firstTime)
+		}
 		if m.showSecretModal {
 			var updated tea.Model
 			var cmd tea.Cmd

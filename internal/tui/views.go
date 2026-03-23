@@ -14,24 +14,73 @@ func (m Model) View() string {
 		return ""
 	}
 
+	// Gate: do not render any screen content until we have real terminal
+	// dimensions from the first WindowSizeMsg. Bubble Tea calls View()
+	// once before the first WindowSizeMsg is dispatched, so m.width and
+	// m.height are 0 at that point. Rendering with zero/fallback
+	// dimensions causes overflow on small terminals. Return a minimal
+	// placeholder instead — the real render happens on the next tick
+	// once sizeReceived is true.
+	if !m.sizeReceived {
+		if m.debug && m.debugLog != nil {
+			m.debugLog.Log("View() called BEFORE WindowSizeMsg — w=%d h=%d (returning placeholder)", m.width, m.height)
+		}
+		return ""
+	}
+
 	// Secret modal takes priority over all other overlays.
 	if m.showSecretModal {
 		modal := m.secretModal.View()
-		return m.centerOverlay(modal)
+		out := m.centerOverlay(modal)
+		if m.debug {
+			lines := strings.Count(out, "\n") + 1
+			if m.debugLog != nil {
+				m.debugLog.LogView("modal", m.width, m.height, m.sizeReceived, lines)
+			}
+		}
+		return out
 	}
 
 	// Overlays render on top of the current screen.
 	if m.showHelp {
-		return m.viewHelpOverlay()
+		out := m.viewHelpOverlay()
+		if m.debug {
+			lines := strings.Count(out, "\n") + 1
+			if m.debugLog != nil {
+				m.debugLog.LogView("help", m.width, m.height, m.sizeReceived, lines)
+			}
+		}
+		return out
 	}
 	if m.showGenerator {
-		return m.viewGeneratorOverlay()
+		out := m.viewGeneratorOverlay()
+		if m.debug {
+			lines := strings.Count(out, "\n") + 1
+			if m.debugLog != nil {
+				m.debugLog.LogView("generator", m.width, m.height, m.sizeReceived, lines)
+			}
+		}
+		return out
 	}
 	if m.showInfo {
-		return m.viewInfoOverlay()
+		out := m.viewInfoOverlay()
+		if m.debug {
+			lines := strings.Count(out, "\n") + 1
+			if m.debugLog != nil {
+				m.debugLog.LogView("info", m.width, m.height, m.sizeReceived, lines)
+			}
+		}
+		return out
 	}
 	if m.showSettings {
-		return m.viewSettingsOverlay()
+		out := m.viewSettingsOverlay()
+		if m.debug {
+			lines := strings.Count(out, "\n") + 1
+			if m.debugLog != nil {
+				m.debugLog.LogView("settings", m.width, m.height, m.sizeReceived, lines)
+			}
+		}
+		return out
 	}
 
 	var s string
@@ -46,6 +95,24 @@ func (m Model) View() string {
 		s = m.viewListScreen()
 	}
 
+	// Debug logging and debug bar overlay.
+	if m.debug {
+		lines := strings.Count(s, "\n") + 1
+		screenName := "list"
+		switch m.screen {
+		case screenDetail:
+			screenName = "detail"
+		case screenConfirmDelete:
+			screenName = "confirm"
+		}
+		if m.debugLog != nil {
+			m.debugLog.LogView(screenName, m.width, m.height, m.sizeReceived, lines)
+		}
+		// Prepend a debug status bar at the very top of the output.
+		debugBar := m.debugStatusBar(lines)
+		s = debugBar + "\n" + s
+	}
+
 	return s
 }
 
@@ -53,10 +120,8 @@ func (m Model) View() string {
 
 func (m Model) viewListScreen() string {
 	var b strings.Builder
+	// sizeReceived gate in View() guarantees m.width > 0.
 	w := m.width
-	if w <= 0 {
-		w = 80
-	}
 
 	// Header.
 	header := TitleStyle.Render("  MaestroVault")
@@ -205,14 +270,10 @@ func (m Model) viewListScreen() string {
 // ── Detail screen ─────────────────────────────────────────────
 
 func (m Model) viewDetailScreen() string {
+	// sizeReceived gate in View() guarantees m.width/m.height are set
+	// from a real WindowSizeMsg before this function is ever called.
 	w := m.width
-	if w <= 0 {
-		w = 80
-	}
 	h := m.height
-	if h <= 0 {
-		h = 24
-	}
 
 	s := m.currentSecret()
 	if s == nil {
@@ -358,6 +419,13 @@ func (m Model) viewDetailScreen() string {
 		availableHeight = 3
 	}
 
+	// Debug: log the detail screen height arithmetic.
+	if m.debug && m.debugLog != nil {
+		bodyRawLines := strings.Count(bodyStr, "\n") + 1
+		m.debugLog.Log("viewDetailScreen: w=%d h=%d headerVisual=%d footerVisual=%d bodyRawLines=%d availableHeight=%d detailScroll=%d sizeReceived=%v",
+			w, h, headerVisual, footerVisual, bodyRawLines, availableHeight, m.detailScroll, m.sizeReceived)
+	}
+
 	constrainedBody, _ := viewportRender(bodyStr, availableHeight, m.detailScroll, -1)
 
 	var out strings.Builder
@@ -374,10 +442,8 @@ func (m Model) viewDetailScreen() string {
 
 func (m Model) viewConfirmDeleteScreen() string {
 	var b strings.Builder
+	// sizeReceived gate in View() guarantees m.width > 0.
 	w := m.width
-	if w <= 0 {
-		w = 80
-	}
 
 	names := m.selectedNames()
 	b.WriteString(WarningStyle.Render("  Delete Confirmation"))
@@ -798,23 +864,16 @@ func (m Model) checkMark(on bool) string {
 }
 
 func (m Model) centerOverlay(content string) string {
+	// sizeReceived gate in View() guarantees m.width/m.height > 0.
 	w := m.width
-	if w <= 0 {
-		w = 80
-	}
 	h := m.height
-	if h <= 0 {
-		h = 24
-	}
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
 }
 
 // Column width calculations for the list view.
 func (m Model) nameColWidth() int {
+	// sizeReceived gate in View() guarantees m.width > 0.
 	w := m.width
-	if w <= 0 {
-		w = 80
-	}
 	// NAME gets ~35% of space, min 12.
 	col := w * 35 / 100
 	if col < 12 {
@@ -827,10 +886,8 @@ func (m Model) nameColWidth() int {
 }
 
 func (m Model) metadataColWidth() int {
+	// sizeReceived gate in View() guarantees m.width > 0.
 	w := m.width
-	if w <= 0 {
-		w = 80
-	}
 	// METADATA gets ~30% of space, min 10.
 	col := w * 30 / 100
 	if col < 10 {

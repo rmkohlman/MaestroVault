@@ -174,6 +174,17 @@ type Model struct {
 	height       int
 	quitting     bool
 
+	// Diagnostic: tracks whether a WindowSizeMsg has been received.
+	// Bubble Tea calls View() once before sending the first WindowSizeMsg
+	// (see tea.go Run(): renderer.write(model.View()) on line 700, then
+	// handleResize() on line 710). This flag lets us detect that state.
+	sizeReceived bool
+
+	// Debug mode: when enabled, logs diagnostic data to /tmp/mav-debug.log
+	// and renders a debug status bar at the bottom of each screen.
+	debug    bool
+	debugLog *DebugLogger
+
 	// Vim mode support.
 	vimEnabled   bool
 	mode         vimMode
@@ -223,6 +234,7 @@ type Model struct {
 type Opts struct {
 	VimMode     bool
 	FuzzySearch bool
+	Debug       bool
 }
 
 // New creates a new TUI model backed by an open vault.
@@ -230,6 +242,11 @@ func New(v vault.Vault, opts Opts) Model {
 	si := textinput.New()
 	si.Placeholder = "search..."
 	si.CharLimit = 128
+
+	var dl *DebugLogger
+	if opts.Debug {
+		dl = NewDebugLogger()
+	}
 
 	return Model{
 		vault:       v,
@@ -241,6 +258,8 @@ func New(v vault.Vault, opts Opts) Model {
 		valueMasked: true,
 		sortOrder:   SortNameAsc,
 		gen:         newGenState(),
+		debug:       opts.Debug,
+		debugLog:    dl,
 	}
 }
 

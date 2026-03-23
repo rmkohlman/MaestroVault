@@ -1199,7 +1199,10 @@ func newDestroyCmd() *cobra.Command {
 }
 
 func newTUICmd() *cobra.Command {
-	var vimMode bool
+	var (
+		vimMode  bool
+		debugTUI bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "tui",
@@ -1207,7 +1210,8 @@ func newTUICmd() *cobra.Command {
 		Long: `Opens a full-screen interactive interface for managing secrets.
 Colors automatically adapt to your terminal theme.
 Use --vim for Normal/Visual/Insert modes with full vim motions.
-Set "vim_mode": true in ~/.maestrovault/config.json to enable by default.`,
+Set "vim_mode": true in ~/.maestrovault/config.json to enable by default.
+Use --debug to enable diagnostic logging to /tmp/mav-debug.log.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withVault(func(ctx context.Context, v vault.Vault) error {
 				// If --vim was not explicitly set, fall back to config.
@@ -1220,6 +1224,7 @@ Set "vim_mode": true in ~/.maestrovault/config.json to enable by default.`,
 				opts := tui.Opts{
 					VimMode:     vimMode,
 					FuzzySearch: cfg.FuzzySearch,
+					Debug:       debugTUI,
 				}
 				p := tea.NewProgram(tui.New(v, opts), tea.WithAltScreen())
 				if _, err := p.Run(); err != nil {
@@ -1231,6 +1236,7 @@ Set "vim_mode": true in ~/.maestrovault/config.json to enable by default.`,
 	}
 
 	cmd.Flags().BoolVar(&vimMode, "vim", false, "Enable vim modes (Normal/Visual/Insert) with mode indicator")
+	cmd.Flags().BoolVar(&debugTUI, "debug", false, "Enable diagnostic debug logging to /tmp/mav-debug.log")
 	return cmd
 }
 
