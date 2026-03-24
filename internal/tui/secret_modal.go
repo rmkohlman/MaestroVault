@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -931,10 +932,52 @@ func (m SecretModal) View() string {
 	// Safety net: truncate output to terminal height. This mirrors what the
 	// Bubble Tea renderer does internally, but we do it proactively so the
 	// renderer doesn't silently drop our header/top-border.
-	lines := strings.Split(result, "\n")
-	if m.height > 0 && len(lines) > m.height {
-		result = strings.Join(lines[:m.height], "\n")
+	linesBefore := strings.Split(result, "\n")
+	lineCountBefore := len(linesBefore)
+	truncated := false
+	if m.height > 0 && lineCountBefore > m.height {
+		result = strings.Join(linesBefore[:m.height], "\n")
+		truncated = true
 	}
+	linesAfter := strings.Split(result, "\n")
+	lineCountAfter := len(linesAfter)
+
+	// ── Debug logging to /tmp/mav-modal-debug.log ──
+	if f, err := os.OpenFile("/tmp/mav-modal-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+		modeStr := "unknown"
+		switch m.mode {
+		case modalView:
+			modeStr = "view"
+		case modalEdit:
+			modeStr = "edit"
+		case modalAdd:
+			modeStr = "add"
+		}
+
+		fmt.Fprintf(f, "=== SecretModal.View() ===\n")
+		fmt.Fprintf(f, "  width=%d height=%d mode=%s standalone=%v showFullView=%v\n",
+			m.width, m.height, modeStr, m.standalone, m.showFullView)
+		fmt.Fprintf(f, "  linesBefore=%d linesAfter=%d truncated=%v\n",
+			lineCountBefore, lineCountAfter, truncated)
+
+		// First 3 lines of output
+		fmt.Fprintf(f, "  --- first 3 lines ---\n")
+		for i := 0; i < 3 && i < lineCountAfter; i++ {
+			fmt.Fprintf(f, "  [%d]: %q\n", i, linesAfter[i])
+		}
+		// Last 3 lines of output
+		fmt.Fprintf(f, "  --- last 3 lines ---\n")
+		start := lineCountAfter - 3
+		if start < 0 {
+			start = 0
+		}
+		for i := start; i < lineCountAfter; i++ {
+			fmt.Fprintf(f, "  [%d]: %q\n", i, linesAfter[i])
+		}
+		fmt.Fprintf(f, "\n")
+		f.Close()
+	}
+
 	return result
 }
 
