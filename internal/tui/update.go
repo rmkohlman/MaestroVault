@@ -91,6 +91,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.showSecretModal = true
 		return m, textinput.Blink
 
+	case editorFinishedMsg:
+		// Forward editor completion to the secret modal.
+		if m.showSecretModal {
+			var updated tea.Model
+			var cmd tea.Cmd
+			updated, cmd = m.secretModal.Update(msg)
+			m.secretModal = updated.(SecretModal)
+			return m, cmd
+		}
+		return m, nil
+
 	case secretModalResultMsg:
 		m.secretModal.saving = false
 		if msg.saved {

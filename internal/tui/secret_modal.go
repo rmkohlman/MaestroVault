@@ -3,6 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -85,6 +88,12 @@ type secretModalDoneMsg struct {
 	toast string
 	kind  string
 	saved bool
+}
+
+// editorFinishedMsg is sent when the external $EDITOR process exits.
+type editorFinishedMsg struct {
+	err  error
+	path string // temp file path to read back and clean up
 }
 
 // ── SecretModal ───────────────────────────────────────────────
@@ -405,6 +414,9 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reached only in standalone mode.
 		return m, tea.Quit
 
+	case editorFinishedMsg:
+		return m.handleEditorFinished(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -607,6 +619,8 @@ func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Everything else (up, down, enter, chars) goes to the textarea.
 	if m.useTextarea && m.focusField == fieldValue {
 		switch {
+		case msg.Type == tea.KeyCtrlE:
+			return m.openEditor()
 		case msg.Type == tea.KeyCtrlR:
 			// Hide: switch back to masked textinput display.
 			// Do NOT sync textarea→textinput (textinput strips newlines).
@@ -640,6 +654,9 @@ func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch {
+	case msg.Type == tea.KeyCtrlE:
+		return m.openEditor()
+
 	case msg.Type == tea.KeyCtrlR:
 		// Toggle value visibility for the main value input or focused field value.
 		if m.focusField == fieldValue {
@@ -807,6 +824,133 @@ func (m SecretModal) handleAddKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.handleFormKey(msg)
+}
+
+// ── External editor ───────────────────────────────────────────
+
+// openEditor writes the current value to a secure temp file and launches
+// $EDITOR via tea.ExecProcess. When the editor exits, editorFinishedMsg is
+// sent back to Update().
+func (m SecretModal) openEditor() (tea.Model, tea.Cmd) {
+	// Resolve and validate editor BEFORE writing secret to temp file.
+	editorArgs, err := resolveEditor()
+	if err != nil {
+		m.toast = err.Error()
+		m.toastKind = "error"
+		m.recalcTextareaHeight()
+		return m, nil
+	}
+
+	// Determine the current value from the best source.
+	var value string
+	if m.textareaInited {
+		value = m.valueArea.Value()
+	} else if m.entry != nil {
+		value = m.entry.Value
+	} else {
+		value = m.valueInput.Value()
+	}
+
+	// Create a private temp directory under the user's config dir to avoid
+	// writing secrets to the shared /tmp directory.
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = os.TempDir()
+	}
+	secureDir := filepath.Join(homeDir, ".config", "mav", "tmp")
+	if err := os.MkdirAll(secureDir, 0700); err != nil {
+		// Fall back to system temp if we can't create the private dir.
+		secureDir = ""
+	}
+
+	// Write value to a secure temp file with generic name.
+	tmpFile, err := os.CreateTemp(secureDir, ".tmp-*")
+	if err != nil {
+		m.toast = fmt.Sprintf("Failed to create temp file: %s", err)
+		m.toastKind = "error"
+		m.recalcTextareaHeight()
+		return m, nil
+	}
+	tmpPath := tmpFile.Name()
+
+	// Use fchmod on the file descriptor to avoid TOCTOU race.
+	if err := tmpFile.Chmod(0600); err != nil {
+		tmpFile.Close()
+		secureCleanup(tmpPath)
+		m.toast = fmt.Sprintf("Failed to set temp file permissions: %s", err)
+		m.toastKind = "error"
+		m.recalcTextareaHeight()
+		return m, nil
+	}
+
+	if _, err := tmpFile.WriteString(value); err != nil {
+		tmpFile.Close()
+		secureCleanup(tmpPath)
+		m.toast = fmt.Sprintf("Failed to write temp file: %s", err)
+		m.toastKind = "error"
+		m.recalcTextareaHeight()
+		return m, nil
+	}
+	tmpFile.Close()
+
+	// Build the exec.Command with the editor args + temp file path.
+	args := append(editorArgs[1:], tmpPath)
+	cmd := tea.ExecProcess(exec.Command(editorArgs[0], args...), func(err error) tea.Msg {
+		return editorFinishedMsg{err: err, path: tmpPath}
+	})
+	return m, cmd
+}
+
+// handleEditorFinished processes the result of the external editor.
+func (m SecretModal) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd) {
+	defer secureCleanup(msg.path)
+
+	if msg.err != nil {
+		m.toast = fmt.Sprintf("Editor exited with error: %s", msg.err)
+		m.toastKind = "error"
+		m.recalcTextareaHeight()
+		return m, nil
+	}
+
+	// Read the edited content back.
+	data, err := os.ReadFile(msg.path)
+	if err != nil {
+		m.toast = fmt.Sprintf("Failed to read edited value: %s", err)
+		m.toastKind = "error"
+		m.recalcTextareaHeight()
+		return m, nil
+	}
+
+	newValue := string(data)
+	// Zero the byte slice to reduce secret exposure in memory.
+	for i := range data {
+		data[i] = 0
+	}
+
+	// Update the entry value so save picks it up.
+	if m.entry != nil {
+		m.entry.Value = newValue
+	}
+
+	// Update the appropriate input component.
+	if m.textareaInited {
+		m.valueArea.SetValue(newValue)
+	} else if isLargeValue(newValue) {
+		// Value is now large — initialize textarea.
+		m.initValueTextarea(newValue)
+		if m.valueRevealed {
+			m.useTextarea = true
+		}
+	}
+
+	// Always update the textinput (for small values or masked display).
+	m.valueInput.SetValue(newValue)
+
+	// Clear any previous toast.
+	m.toast = ""
+	m.recalcTextareaHeight()
+
+	return m, nil
 }
 
 // ── Actions ───────────────────────────────────────────────────
@@ -1317,6 +1461,9 @@ func (m SecretModal) editModeView(titleText string) string {
 			)
 		}
 		helpParts = append(helpParts,
+			HelpKeyStyle.Render("ctrl+e")+" "+HelpDescStyle.Render("editor"),
+		)
+		helpParts = append(helpParts,
 			HelpKeyStyle.Render("ctrl+A")+" "+HelpDescStyle.Render("add field"),
 		)
 		if len(m.fieldPairs) > 0 {
@@ -1521,6 +1668,55 @@ func (m SecretModal) centerStandalone(content string) string {
 }
 
 // ── Helpers ───────────────────────────────────────────────────
+
+// resolveEditor returns the user's preferred editor command split into args.
+// Resolution order: $EDITOR → $VISUAL → nvim → vim → vi. Validates the
+// binary exists via exec.LookPath before returning, so no secret data is
+// written to disk unless the editor is confirmed available.
+func resolveEditor() ([]string, error) {
+	for _, env := range []string{"EDITOR", "VISUAL"} {
+		if e := os.Getenv(env); e != "" {
+			fields := strings.Fields(e)
+			if len(fields) > 0 {
+				if _, err := exec.LookPath(fields[0]); err == nil {
+					return fields, nil
+				}
+			}
+		}
+	}
+	// Prefer nvim > vim > vi — macOS system vi is ancient and chokes
+	// on modern .vimrc with Lua/Neovim-specific config.
+	for _, editor := range []string{"nvim", "vim", "vi"} {
+		if _, err := exec.LookPath(editor); err == nil {
+			return []string{editor}, nil
+		}
+	}
+	return nil, fmt.Errorf("no editor found: set $EDITOR or $VISUAL")
+}
+
+// secureCleanup overwrites a temp file with zeros, flushes to disk, then
+// removes it. Note: on copy-on-write filesystems like APFS, the original
+// data may persist in unallocated blocks until the SSD garbage-collects
+// them. This is a known limitation — the overwrite minimizes exposure on
+// traditional filesystems and reduces the window on all platforms.
+func secureCleanup(path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		_ = os.Remove(path)
+		return
+	}
+	size := info.Size()
+	if size > 0 {
+		f, err := os.OpenFile(path, os.O_WRONLY, 0600)
+		if err == nil {
+			zeros := make([]byte, size)
+			_, _ = f.Write(zeros)
+			_ = f.Sync()
+			f.Close()
+		}
+	}
+	_ = os.Remove(path)
+}
 
 // modalWidth returns the content width for the modal, scaled to the terminal
 // width. The modal border + padding consume ~6 columns, so we subtract that
