@@ -124,7 +124,8 @@ type SecretModal struct {
 	height int
 
 	// Standalone mode (when used from CLI).
-	standalone bool
+	standalone   bool
+	sizeReceived bool // true after first tea.WindowSizeMsg
 
 	// Toast for inline error display.
 	toast     string
@@ -347,6 +348,7 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.sizeReceived = true
 		// Resize viewport for view mode.
 		m.viewVP.Width = m.modalWidth()
 		m.viewVP.Height = m.viewportHeight()
@@ -905,6 +907,9 @@ func (m *SecretModal) blurAll() {
 // ── View ──────────────────────────────────────────────────────
 
 func (m SecretModal) View() string {
+	if !m.sizeReceived {
+		return ""
+	}
 	if m.showFullView {
 		return m.fullViewView()
 	}
