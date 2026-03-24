@@ -124,8 +124,7 @@ type SecretModal struct {
 	height int
 
 	// Standalone mode (when used from CLI).
-	standalone   bool
-	sizeReceived bool // true after first tea.WindowSizeMsg
+	standalone bool
 
 	// Toast for inline error display.
 	toast     string
@@ -348,7 +347,6 @@ func (m SecretModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.sizeReceived = true
 		// Resize viewport for view mode.
 		m.viewVP.Width = m.modalWidth()
 		m.viewVP.Height = m.viewportHeight()
@@ -907,21 +905,37 @@ func (m *SecretModal) blurAll() {
 // ── View ──────────────────────────────────────────────────────
 
 func (m SecretModal) View() string {
-	if !m.sizeReceived {
+	// Block rendering until dimensions are known. In overlay mode the
+	// parent TUI sets width/height directly; in standalone mode
+	// tea.WindowSizeMsg sets them. Either way, 0 means "not yet ready".
+	if m.width == 0 || m.height == 0 {
 		return ""
 	}
+
+	var result string
 	if m.showFullView {
-		return m.fullViewView()
+		result = m.fullViewView()
+	} else {
+		switch m.mode {
+		case modalView:
+			result = m.viewModeView()
+		case modalEdit:
+			result = m.editModeView("Editing")
+		case modalAdd:
+			result = m.editModeView("Add Secret")
+		default:
+			return ""
+		}
 	}
-	switch m.mode {
-	case modalView:
-		return m.viewModeView()
-	case modalEdit:
-		return m.editModeView("Editing")
-	case modalAdd:
-		return m.editModeView("Add Secret")
+
+	// Safety net: truncate output to terminal height. This mirrors what the
+	// Bubble Tea renderer does internally, but we do it proactively so the
+	// renderer doesn't silently drop our header/top-border.
+	lines := strings.Split(result, "\n")
+	if m.height > 0 && len(lines) > m.height {
+		result = strings.Join(lines[:m.height], "\n")
 	}
-	return ""
+	return result
 }
 
 func (m *SecretModal) viewModeView() string {
