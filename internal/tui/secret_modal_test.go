@@ -7,6 +7,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rmkohlman/MaestroVault/internal/vault"
 )
 
@@ -367,8 +369,8 @@ func TestSecretModal_EditMode_LargeValue_CenterOverlay(t *testing.T) {
 
 // TestSecretModal_EditMode_TextareaRenderedHeight checks that the textarea
 // view itself doesn't produce more lines than textareaHeight() + a small margin.
-// NOTE: NewSecretModalEdit does NOT call initValueTextarea — we must do it manually
-// to test the textarea path (simulating the view→edit transition).
+// The textarea is lazily initialized via Ctrl+R reveal (not at construction time),
+// so we simulate the reveal flow before measuring.
 func TestSecretModal_EditMode_TextareaRenderedHeight(t *testing.T) {
 	const termHeight = 40
 	const termWidth = 80
@@ -376,13 +378,20 @@ func TestSecretModal_EditMode_TextareaRenderedHeight(t *testing.T) {
 	entry := newTestEntry("my-pem-cert", largeSecret(100))
 	m := newEditModalWithDims(entry, termHeight, termWidth)
 
-	// Simulate the view→edit transition which checks isLargeValue and inits textarea.
-	if isLargeValue(entry.Value) {
-		m.initValueTextarea(entry.Value)
+	// Constructor should NOT initialise textarea — values start masked.
+	if m.useTextarea {
+		t.Fatal("expected useTextarea=false from constructor — values start masked")
 	}
 
+	// Simulate Ctrl+R to reveal: focus value field, then press Ctrl+R.
+	m.focusField = fieldValue
+	m.focusCurrentField()
+	ctrlR := tea.KeyMsg{Type: tea.KeyCtrlR}
+	model, _ := m.Update(ctrlR)
+	m = model.(SecretModal)
+
 	if !m.useTextarea {
-		t.Fatal("expected useTextarea=true for large value after initValueTextarea")
+		t.Fatal("expected useTextarea=true after Ctrl+R reveal for large value")
 	}
 
 	taHeight := m.textareaHeight()
@@ -400,10 +409,11 @@ func TestSecretModal_EditMode_TextareaRenderedHeight(t *testing.T) {
 	}
 }
 
-// TestSecretModal_EditMode_ConstructorMissingTextarea verifies that
-// NewSecretModalEdit does NOT initialize textarea for large values — which
-// means Path 1 (list→edit) always uses textinput regardless of value size.
-func TestSecretModal_EditMode_ConstructorMissingTextarea(t *testing.T) {
+// TestSecretModal_EditMode_ConstructorStartsMasked verifies that
+// NewSecretModalEdit does NOT initialize textarea for large values.
+// Values always start masked (using textinput with EchoPassword).
+// Textarea is lazily initialized via Ctrl+R reveal.
+func TestSecretModal_EditMode_ConstructorStartsMasked(t *testing.T) {
 	entry := newTestEntry("my-pem-cert", largeSecret(100))
 
 	// Verify isLargeValue detects this correctly.
@@ -415,17 +425,22 @@ func TestSecretModal_EditMode_ConstructorMissingTextarea(t *testing.T) {
 	m.height = 40
 	m.width = 80
 
-	t.Logf("useTextarea = %v (expected false — constructor doesn't init textarea)", m.useTextarea)
-	t.Logf("valueInput value length = %d bytes", len(m.valueInput.Value()))
+	t.Logf("useTextarea = %v (expected false — constructor starts masked)", m.useTextarea)
 
 	if m.useTextarea {
-		t.Error("NewSecretModalEdit unexpectedly initialized textarea")
+		t.Error("NewSecretModalEdit should NOT initialize textarea — values start masked")
+	}
+	if m.valueRevealed {
+		t.Error("valueRevealed should be false — values start masked")
+	}
+	if m.valueInput.EchoMode != textinput.EchoPassword {
+		t.Error("valueInput.EchoMode should be EchoPassword — values start masked")
 	}
 }
 
 // TestSecretModal_EditMode_ViewToEditPath_Textarea tests the view→edit transition
-// path which DOES initialize textarea. This simulates: user views secret, presses
-// "e" to switch to edit mode.
+// path. This simulates: user views secret, presses 'e' to switch to edit mode.
+// Values start masked; textarea is lazily initialized via Ctrl+R.
 func TestSecretModal_EditMode_ViewToEditPath_Textarea(t *testing.T) {
 	const termHeight = 40
 	const termWidth = 80
@@ -435,40 +450,59 @@ func TestSecretModal_EditMode_ViewToEditPath_Textarea(t *testing.T) {
 	// Start in view mode (as the user would)
 	m := newModalWithDims(entry, termHeight, termWidth)
 
-	// Simulate pressing "e" — the handleViewKey code path
-	// This is what handleViewKey does at line 486-509:
+	// Simulate pressing "e" — the handleViewKey code path now starts masked.
 	m.mode = modalEdit
 	m.origName = entry.Name
 	m.origEnv = entry.Environment
 	m.nameInput.SetValue(entry.Name)
 	m.envInput.SetValue(entry.Environment)
 	m.metadataInput.SetValue(formatMetadataPlain(entry.Metadata))
-	if isLargeValue(entry.Value) {
-		m.initValueTextarea(entry.Value)
-	} else {
-		m.valueInput.SetValue(entry.Value)
-	}
+	// Value starts masked — just set textinput.
+	m.valueInput.SetValue(entry.Value)
+	m.useTextarea = false
+	m.valueRevealed = false
+	m.valueInput.EchoMode = textinput.EchoPassword
 	m.focusField = fieldName
 	m.focusCurrentField()
 
-	// Now render the edit mode view
+	// Now render the edit mode view (masked)
 	rendered := m.editModeView("Editing")
 	lines := lineCount(rendered)
 
-	t.Logf("View→Edit path (textarea): useTextarea=%v, rendered lines=%d", m.useTextarea, lines)
+	t.Logf("View→Edit path (masked): useTextarea=%v, rendered lines=%d", m.useTextarea, lines)
 
 	if lines > termHeight {
-		t.Errorf("View→Edit path: %d lines exceeds terminal height %d", lines, termHeight)
+		t.Errorf("View→Edit path (masked): %d lines exceeds terminal height %d", lines, termHeight)
+	}
+
+	// Simulate Ctrl+R to reveal — should lazily init textarea for large value.
+	m.focusField = fieldValue
+	m.focusCurrentField()
+	ctrlR := tea.KeyMsg{Type: tea.KeyCtrlR}
+	model, _ := m.Update(ctrlR)
+	revealed := model.(SecretModal)
+
+	if !revealed.useTextarea {
+		t.Error("expected useTextarea=true after Ctrl+R reveal for large value")
+	}
+
+	revealedRendered := revealed.editModeView("Editing")
+	revealedLines := lineCount(revealedRendered)
+
+	t.Logf("View→Edit path (revealed): useTextarea=%v, rendered lines=%d", revealed.useTextarea, revealedLines)
+
+	if revealedLines > termHeight {
+		t.Errorf("View→Edit path (revealed): %d lines exceeds terminal height %d", revealedLines, termHeight)
 	}
 
 	// Also test the full render path through centerOverlay
-	centeredOutput := m.centerStandalone(rendered)
+	centeredOutput := revealed.centerStandalone(revealedRendered)
 	centeredLines := lineCount(centeredOutput)
 
-	t.Logf("View→Edit path centered: %d lines", centeredLines)
+	t.Logf("View→Edit path centered (revealed): %d lines", centeredLines)
 
 	if centeredLines > termHeight {
-		t.Errorf("View→Edit centered: %d lines exceeds terminal height %d", centeredLines, termHeight)
+		t.Errorf("View→Edit centered (revealed): %d lines exceeds terminal height %d", centeredLines, termHeight)
 	}
 }
 
@@ -1109,6 +1143,144 @@ func TestDetailScreen_FullModelView_AllValueTypes(t *testing.T) {
 			if visualLines > tc.termHeight {
 				t.Errorf("OVERFLOW (visual): %d visual lines exceeds terminal height %d",
 					visualLines, tc.termHeight)
+			}
+		})
+	}
+}
+
+// ── Issue #15 regression tests ────────────────────────────────────────────────
+
+// TestSecretModal_Constructor_StartsMasked_100LinePEM is a targeted regression
+// test for the lazy textarea approach: NewSecretModalEdit must NOT set
+// useTextarea=true for a 100-line PEM cert. Values start masked. Textarea
+// is lazily initialized when the user presses Ctrl+R.
+func TestSecretModal_Constructor_StartsMasked_100LinePEM(t *testing.T) {
+	pemValue := largeSecret(100)
+	if !isLargeValue(pemValue) {
+		t.Fatalf("test setup: expected isLargeValue=true for 100-line value")
+	}
+	entry := newTestEntry("my-cert", pemValue)
+	m := NewSecretModalEdit(entry, nil)
+	if m.useTextarea {
+		t.Error("useTextarea should be false after NewSecretModalEdit — values start masked")
+	}
+	if m.valueRevealed {
+		t.Error("valueRevealed should be false — values start masked")
+	}
+	// The textinput should have a value loaded. Note: textinput.SetValue()
+	// replaces newlines with spaces, so the value won't exactly match the
+	// original multi-line PEM. We just verify it's non-empty.
+	if m.valueInput.Value() == "" {
+		t.Error("textinput should have a non-empty value loaded")
+	}
+}
+
+// TestSecretModal_EditMode_CtrlR_WithinBounds tests Ctrl+R (reveal toggle) in
+// edit mode across 80x24, 120x40, 60x15 terminal sizes, verifying the rendered
+// output stays within terminal bounds both before and after masking is restored.
+func TestSecretModal_EditMode_CtrlR_WithinBounds(t *testing.T) {
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+	}{
+		{"80x24", 24, 80},
+		{"120x40", 40, 120},
+		{"60x15", 15, 60},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := newTestEntry("my-api-key", "short-secret-value-abc123")
+			m := newEditModalWithDims(entry, tc.termHeight, tc.termWidth)
+			if m.useTextarea {
+				t.Fatal("short value should not use textarea")
+			}
+
+			// Send Ctrl+R to reveal the value.
+			ctrlR := tea.KeyMsg{Type: tea.KeyCtrlR}
+			m.focusField = fieldValue
+			m.focusCurrentField()
+			model, _ := m.Update(ctrlR)
+			updated := model.(SecretModal)
+
+			if !updated.valueRevealed {
+				t.Error("valueRevealed should be true after Ctrl+R")
+			}
+
+			rendered := updated.editModeView("Editing")
+			rawLines := strings.Count(rendered, "\n") + 1
+			maxWidth := maxLineWidthRunes(rendered)
+			t.Logf("Ctrl+R revealed: %d raw lines, max width %d (terminal %dx%d)", rawLines, maxWidth, tc.termWidth, tc.termHeight)
+
+			if rawLines > tc.termHeight {
+				t.Errorf("Ctrl+R reveal: raw line count %d exceeds terminal height %d", rawLines, tc.termHeight)
+			}
+			if maxWidth > tc.termWidth {
+				t.Errorf("Ctrl+R reveal: max line width %d exceeds terminal width %d", maxWidth, tc.termWidth)
+			}
+
+			// Second Ctrl+R should re-mask.
+			model2, _ := updated.Update(ctrlR)
+			masked := model2.(SecretModal)
+			if masked.valueRevealed {
+				t.Error("valueRevealed should be false after second Ctrl+R (re-mask)")
+			}
+		})
+	}
+}
+
+// TestSecretModal_Constructor_MultiSize tests NewSecretModalEdit at 80x24,
+// 120x40, and 60x15 with a 100-line PEM cert to confirm values start masked
+// and Ctrl+R correctly reveals with textarea, all within terminal bounds.
+func TestSecretModal_Constructor_MultiSize(t *testing.T) {
+	tests := []struct {
+		name       string
+		termHeight int
+		termWidth  int
+	}{
+		{"80x24", 24, 80},
+		{"120x40", 40, 120},
+		{"60x15", 15, 60},
+	}
+	pemValue := largeSecret(100)
+	entry := newTestEntry("my-pem-cert", pemValue)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newEditModalWithDims(entry, tc.termHeight, tc.termWidth)
+			if m.useTextarea {
+				t.Errorf("[%s] useTextarea=true — constructor should NOT call initValueTextarea (values start masked)", tc.name)
+			}
+			// Values start masked — rendered output via View() should fit.
+			rendered := m.View()
+			rawLines := strings.Count(rendered, "\n") + 1
+			maxWidth := maxLineWidthRunes(rendered)
+			t.Logf("[%s] masked edit modal: %d raw lines, max width %d", tc.name, rawLines, maxWidth)
+			if rawLines > tc.termHeight {
+				t.Errorf("[%s] OVERFLOW: %d lines > terminal height %d", tc.name, rawLines, tc.termHeight)
+			}
+			if maxWidth > tc.termWidth {
+				t.Errorf("[%s] WIDTH OVERFLOW: max width %d > terminal width %d", tc.name, maxWidth, tc.termWidth)
+			}
+
+			// Now simulate Ctrl+R to reveal — textarea should be initialized.
+			m.focusField = fieldValue
+			m.focusCurrentField()
+			ctrlR := tea.KeyMsg{Type: tea.KeyCtrlR}
+			model, _ := m.Update(ctrlR)
+			revealed := model.(SecretModal)
+			if !revealed.useTextarea {
+				t.Errorf("[%s] useTextarea should be true after Ctrl+R reveal for large value", tc.name)
+			}
+			if !revealed.valueRevealed {
+				t.Errorf("[%s] valueRevealed should be true after Ctrl+R", tc.name)
+			}
+
+			// Rendered output after reveal should also fit.
+			revealedRendered := revealed.View()
+			revealedLines := strings.Count(revealedRendered, "\n") + 1
+			t.Logf("[%s] revealed edit modal: %d raw lines", tc.name, revealedLines)
+			if revealedLines > tc.termHeight {
+				t.Errorf("[%s] OVERFLOW after reveal: %d lines > terminal height %d", tc.name, revealedLines, tc.termHeight)
 			}
 		})
 	}

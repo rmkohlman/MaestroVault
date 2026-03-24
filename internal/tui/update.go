@@ -87,8 +87,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Received decrypted secret for editing — open modal in edit mode.
 		e := msg.entry
 		m.secretModal = NewSecretModalEdit(e, m.vault)
-		m.secretModal.width = m.width
-		m.secretModal.height = m.height
+		m.secretModal.Resize(m.width, m.height)
 		m.showSecretModal = true
 		return m, textinput.Blink
 
@@ -293,8 +292,7 @@ func (m Model) handleNormalList(msg tea.KeyMsg, key string) (tea.Model, tea.Cmd)
 	// Add (open modal in add mode).
 	case "i", "a", "o":
 		m.secretModal = NewSecretModalAdd(m.vault)
-		m.secretModal.width = m.width
-		m.secretModal.height = m.height
+		m.secretModal.Resize(m.width, m.height)
 		m.showSecretModal = true
 		return m, textinput.Blink
 
@@ -722,8 +720,7 @@ func (m Model) handleKeySimple(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "a":
 			m.secretModal = NewSecretModalAdd(m.vault)
-			m.secretModal.width = m.width
-			m.secretModal.height = m.height
+			m.secretModal.Resize(m.width, m.height)
 			m.showSecretModal = true
 			return m, textinput.Blink
 		case "e":

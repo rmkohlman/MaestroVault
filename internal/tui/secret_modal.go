@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -137,8 +136,9 @@ type SecretModal struct {
 	savedKind string // "success"
 
 	// Large value / textarea state.
-	valueArea   textarea.Model
-	useTextarea bool // true when value field uses textarea instead of textinput
+	valueArea      textarea.Model
+	useTextarea    bool // true when value field is currently showing textarea
+	textareaInited bool // true once initValueTextarea has been called (textarea retains edits)
 
 	// Viewport for view-mode scrollable content and edit-mode form scrolling.
 	// In view mode, all body content is rendered into this viewport so the
@@ -190,6 +190,8 @@ func NewSecretModalEdit(entry *vault.SecretEntry, v vault.Vault) SecretModal {
 	m.initViewport()
 	m.nameInput.SetValue(entry.Name)
 	m.envInput.SetValue(entry.Environment)
+	// Value always starts masked (EchoPassword on the textinput).
+	// Textarea is initialised lazily on Ctrl+R reveal for large values.
 	m.valueInput.SetValue(entry.Value)
 	m.metadataInput.SetValue(formatMetadataPlain(entry.Metadata))
 	// Populate field pairs from entry.
@@ -274,6 +276,7 @@ func (m *SecretModal) initValueTextarea(value string) {
 	ta.ShowLineNumbers = false
 	m.valueArea = ta
 	m.useTextarea = true
+	m.textareaInited = true
 }
 
 func (m *SecretModal) focusCurrentField() {
@@ -320,6 +323,27 @@ func (m *SecretModal) focusCurrentField() {
 // SetStandalone marks this modal as running standalone (CLI alt-screen mode).
 func (m *SecretModal) SetStandalone(b bool) {
 	m.standalone = b
+}
+
+// Resize updates the modal's dimensions and resizes internal components
+// (viewport, textarea) to match. Call this after constructing a modal
+// when the parent already knows the terminal size, since constructors
+// run with width=0/height=0 and produce minimum-sized components.
+func (m *SecretModal) Resize(width, height int) {
+	m.width = width
+	m.height = height
+	// Resize viewport.
+	m.viewVP.Width = m.modalWidth()
+	m.viewVP.Height = m.viewportHeight()
+	// Resize textarea if active.
+	if m.useTextarea {
+		w := m.modalWidth() - 16
+		if w < 30 {
+			w = 30
+		}
+		m.valueArea.SetWidth(w)
+		m.recalcTextareaHeight()
+	}
 }
 
 // SetName pre-fills the name input field (useful when launching add mode from CLI).
@@ -491,12 +515,13 @@ func (m SecretModal) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.nameInput.SetValue(m.entry.Name)
 			m.envInput.SetValue(m.entry.Environment)
 			m.metadataInput.SetValue(formatMetadataPlain(m.entry.Metadata))
-			// Use textarea for large values, textinput for short ones.
-			if isLargeValue(m.entry.Value) {
-				m.initValueTextarea(m.entry.Value)
-			} else {
-				m.valueInput.SetValue(m.entry.Value)
-			}
+			// Value always starts masked (EchoPassword on the textinput).
+			// Textarea is initialised lazily on Ctrl+R reveal for large values.
+			m.valueInput.SetValue(m.entry.Value)
+			m.useTextarea = false
+			m.textareaInited = false // Reset for fresh edit cycle.
+			m.valueRevealed = false
+			m.valueInput.EchoMode = textinput.EchoPassword
 			// Populate field pairs.
 			m.fieldPairs = nil
 			if len(m.entry.Fields) > 0 {
@@ -583,7 +608,14 @@ func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.useTextarea && m.focusField == fieldValue {
 		switch {
 		case msg.Type == tea.KeyCtrlR:
-			// No EchoPassword for textarea — no-op.
+			// Hide: switch back to masked textinput display.
+			// Do NOT sync textarea→textinput (textinput strips newlines).
+			// The textarea retains its value for saving and future reveals.
+			m.valueRevealed = false
+			m.useTextarea = false
+			m.valueArea.Blur()
+			m.valueInput.EchoMode = textinput.EchoPassword
+			m.valueInput.Focus()
 			return m, nil
 		case msg.Type == tea.KeyCtrlA:
 			m.fieldPairs = append(m.fieldPairs, newFieldPair("", ""))
@@ -613,8 +645,39 @@ func (m SecretModal) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focusField == fieldValue {
 			m.valueRevealed = !m.valueRevealed
 			if m.valueRevealed {
-				m.valueInput.EchoMode = textinput.EchoNormal
+				// Revealing: determine the source value for display.
+				// Use the textarea if already initialized (preserves edits),
+				// otherwise use the entry's original value (textinput strips
+				// newlines so it can't hold multi-line content faithfully).
+				var val string
+				if m.textareaInited {
+					val = m.valueArea.Value()
+				} else if m.entry != nil {
+					val = m.entry.Value
+				} else {
+					val = m.valueInput.Value()
+				}
+				if isLargeValue(val) {
+					if m.textareaInited {
+						// Re-show existing textarea (preserves user edits).
+						m.useTextarea = true
+						m.valueArea.Focus()
+					} else {
+						m.initValueTextarea(val)
+						m.valueArea.Focus()
+					}
+				} else {
+					m.valueInput.EchoMode = textinput.EchoNormal
+				}
 			} else {
+				// Hiding: switch back to masked textinput display.
+				// Do NOT sync textarea→textinput (textinput strips newlines).
+				// The textarea retains its value for saving and future reveals.
+				if m.useTextarea {
+					m.useTextarea = false
+					m.valueArea.Blur()
+					m.valueInput.Focus()
+				}
 				m.valueInput.EchoMode = textinput.EchoPassword
 			}
 		} else if m.focusField >= fixedFieldCount {
@@ -756,9 +819,20 @@ func (m SecretModal) saveSecret() (tea.Model, tea.Cmd) {
 		m.recalcTextareaHeight() // toast changes overhead
 		return m, nil
 	}
+	// Determine the authoritative value. When the textarea has been
+	// initialized (via Ctrl+R reveal) it holds the canonical content —
+	// even when currently hidden (useTextarea==false) — because
+	// textinput.SetValue() replaces newlines with spaces, corrupting
+	// multi-line values like PEM certs.
+	//
+	// In edit mode, if the user never revealed (Ctrl+R) the value,
+	// preserve the original entry value exactly to avoid silently
+	// re-saving a newline-corrupted copy.
 	value := m.valueInput.Value()
-	if m.useTextarea {
+	if m.textareaInited {
 		value = m.valueArea.Value()
+	} else if m.mode == modalEdit && m.entry != nil && !m.valueRevealed {
+		value = m.entry.Value
 	}
 
 	// Collect field pairs.
@@ -932,50 +1006,9 @@ func (m SecretModal) View() string {
 	// Safety net: truncate output to terminal height. This mirrors what the
 	// Bubble Tea renderer does internally, but we do it proactively so the
 	// renderer doesn't silently drop our header/top-border.
-	linesBefore := strings.Split(result, "\n")
-	lineCountBefore := len(linesBefore)
-	truncated := false
-	if m.height > 0 && lineCountBefore > m.height {
-		result = strings.Join(linesBefore[:m.height], "\n")
-		truncated = true
-	}
-	linesAfter := strings.Split(result, "\n")
-	lineCountAfter := len(linesAfter)
-
-	// ── Debug logging to /tmp/mav-modal-debug.log ──
-	if f, err := os.OpenFile("/tmp/mav-modal-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-		modeStr := "unknown"
-		switch m.mode {
-		case modalView:
-			modeStr = "view"
-		case modalEdit:
-			modeStr = "edit"
-		case modalAdd:
-			modeStr = "add"
-		}
-
-		fmt.Fprintf(f, "=== SecretModal.View() ===\n")
-		fmt.Fprintf(f, "  width=%d height=%d mode=%s standalone=%v showFullView=%v\n",
-			m.width, m.height, modeStr, m.standalone, m.showFullView)
-		fmt.Fprintf(f, "  linesBefore=%d linesAfter=%d truncated=%v\n",
-			lineCountBefore, lineCountAfter, truncated)
-
-		// First 3 lines of output
-		fmt.Fprintf(f, "  --- first 3 lines ---\n")
-		for i := 0; i < 3 && i < lineCountAfter; i++ {
-			fmt.Fprintf(f, "  [%d]: %q\n", i, linesAfter[i])
-		}
-		// Last 3 lines of output
-		fmt.Fprintf(f, "  --- last 3 lines ---\n")
-		start := lineCountAfter - 3
-		if start < 0 {
-			start = 0
-		}
-		for i := start; i < lineCountAfter; i++ {
-			fmt.Fprintf(f, "  [%d]: %q\n", i, linesAfter[i])
-		}
-		fmt.Fprintf(f, "\n")
-		f.Close()
+	lines := strings.Split(result, "\n")
+	if m.height > 0 && len(lines) > m.height {
+		result = strings.Join(lines[:m.height], "\n")
 	}
 
 	return result
@@ -1272,7 +1305,18 @@ func (m SecretModal) editModeView(titleText string) string {
 		var helpParts []string
 		helpParts = append(helpParts,
 			HelpKeyStyle.Render("↑/↓")+" "+HelpDescStyle.Render("navigate"),
-			HelpKeyStyle.Render("ctrl+r")+" "+HelpDescStyle.Render("peek"),
+		)
+		// Show "ctrl+r hide" when value is revealed, "ctrl+r peek" when masked.
+		if m.valueRevealed {
+			helpParts = append(helpParts,
+				HelpKeyStyle.Render("ctrl+r")+" "+HelpDescStyle.Render("hide"),
+			)
+		} else {
+			helpParts = append(helpParts,
+				HelpKeyStyle.Render("ctrl+r")+" "+HelpDescStyle.Render("peek"),
+			)
+		}
+		helpParts = append(helpParts,
 			HelpKeyStyle.Render("ctrl+A")+" "+HelpDescStyle.Render("add field"),
 		)
 		if len(m.fieldPairs) > 0 {
@@ -1514,12 +1558,24 @@ func (m SecretModal) viewportHeight() int {
 //
 // The textarea has built-in scrolling, so clamping its height does NOT
 // hide content — the user simply scrolls within the component.
+//
+// Height budget breakdown:
+//
+//	Terminal height (m.height)
+//	- Modal frame: border(2) + padding(2)         = 4  (ModalStyle)
+//	- MaxHeight safety: editModeView uses MaxHeight(m.height-4)
+//	  so the content area is at most m.height - 4 - 4 = m.height - 8
+//
+// Fixed content lines in editModeView (NOT the textarea):
+//
+//	title(1) + blank(1)                            = 2
+//	name(1) + env(1) + value label(1) + meta(1)    = 4
+//	blank before help(1) + help bar(1)              = 2
+//	Total fixed                                     = 8
+//
+// Therefore: textarea height = (m.height - 8) - 8 = m.height - 16
 func (m SecretModal) textareaHeight() int {
-	// Fixed overhead in edit mode (lines that are NOT the textarea):
-	//   title(1) + blank(1)                        = 2
-	//   name(1) + env(1) + value label(1) + meta(1) = 4
-	//   blank before help(1) + help bar(1)          = 2
-	// Total fixed = 8
+	// Fixed lines in the content area that are NOT the textarea.
 	overhead := 8
 
 	// Dynamic field pairs: blank + header line + 2 lines per pair.
@@ -1533,9 +1589,10 @@ func (m SecretModal) textareaHeight() int {
 	}
 
 	// The modal frame consumes border(2) + padding(2) = 4 rows.
-	// We also subtract 2 extra safety rows for the centering overlay
-	// and any rounding differences so the rendered modal never overflows.
-	maxContent := m.height - 6 // border(2) + padding(2) + safety(2)
+	// editModeView() uses MaxHeight(m.height - 4), so the rendered modal
+	// (including frame) is capped at m.height - 4 rows. The content area
+	// inside that is (m.height - 4) - 4 = m.height - 8.
+	maxContent := m.height - 8
 	if maxContent < 12 {
 		maxContent = 12
 	}
