@@ -149,6 +149,11 @@ type SecretModal struct {
 	useTextarea    bool // true when value field is currently showing textarea
 	textareaInited bool // true once initValueTextarea has been called (textarea retains edits)
 
+	// editorTarget records which focusField was active when the external
+	// editor was launched, so handleEditorFinished can write the result
+	// back to the correct field.
+	editorTarget int
+
 	// Viewport for view-mode scrollable content and edit-mode form scrolling.
 	// In view mode, all body content is rendered into this viewport so the
 	// modal never exceeds terminal bounds and scrolling is handled natively
@@ -841,14 +846,43 @@ func (m SecretModal) openEditor() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Determine the current value from the best source.
+	// Record which field is being edited so handleEditorFinished writes
+	// the result back to the correct input.
+	m.editorTarget = m.focusField
+
+	// Determine the current value from the focused field.
 	var value string
-	if m.textareaInited {
-		value = m.valueArea.Value()
-	} else if m.entry != nil {
-		value = m.entry.Value
+	if m.focusField == fieldValue {
+		// Main value field.
+		if m.textareaInited {
+			value = m.valueArea.Value()
+		} else if m.entry != nil {
+			value = m.entry.Value
+		} else {
+			value = m.valueInput.Value()
+		}
+	} else if m.focusField >= fixedFieldCount {
+		// Dynamic field pair.
+		idx := m.focusField - fixedFieldCount
+		pairIdx := idx / 2
+		isValue := idx%2 == 1
+		if pairIdx >= 0 && pairIdx < len(m.fieldPairs) {
+			if isValue {
+				value = m.fieldPairs[pairIdx].valueInput.Value()
+			} else {
+				value = m.fieldPairs[pairIdx].keyInput.Value()
+			}
+		}
 	} else {
-		value = m.valueInput.Value()
+		// Fixed non-value fields: name, env, metadata.
+		switch m.focusField {
+		case fieldName:
+			value = m.nameInput.Value()
+		case fieldEnv:
+			value = m.envInput.Value()
+		case fieldMetadata:
+			value = m.metadataInput.Value()
+		}
 	}
 
 	// Create a private temp directory under the user's config dir to avoid
@@ -927,24 +961,45 @@ func (m SecretModal) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea
 		data[i] = 0
 	}
 
-	// Update the entry value so save picks it up.
-	if m.entry != nil {
-		m.entry.Value = newValue
-	}
-
-	// Update the appropriate input component.
-	if m.textareaInited {
-		m.valueArea.SetValue(newValue)
-	} else if isLargeValue(newValue) {
-		// Value is now large — initialize textarea.
-		m.initValueTextarea(newValue)
-		if m.valueRevealed {
-			m.useTextarea = true
+	// Write the edited content back to the correct field based on
+	// which field was focused when the editor was launched.
+	if m.editorTarget == fieldValue {
+		// Main value field — original behavior.
+		if m.entry != nil {
+			m.entry.Value = newValue
+		}
+		if m.textareaInited {
+			m.valueArea.SetValue(newValue)
+		} else if isLargeValue(newValue) {
+			m.initValueTextarea(newValue)
+			if m.valueRevealed {
+				m.useTextarea = true
+			}
+		}
+		m.valueInput.SetValue(newValue)
+	} else if m.editorTarget >= fixedFieldCount {
+		// Dynamic field pair.
+		idx := m.editorTarget - fixedFieldCount
+		pairIdx := idx / 2
+		isValue := idx%2 == 1
+		if pairIdx >= 0 && pairIdx < len(m.fieldPairs) {
+			if isValue {
+				m.fieldPairs[pairIdx].valueInput.SetValue(newValue)
+			} else {
+				m.fieldPairs[pairIdx].keyInput.SetValue(newValue)
+			}
+		}
+	} else {
+		// Fixed non-value fields: name, env, metadata.
+		switch m.editorTarget {
+		case fieldName:
+			m.nameInput.SetValue(newValue)
+		case fieldEnv:
+			m.envInput.SetValue(newValue)
+		case fieldMetadata:
+			m.metadataInput.SetValue(newValue)
 		}
 	}
-
-	// Always update the textinput (for small values or masked display).
-	m.valueInput.SetValue(newValue)
 
 	// Clear any previous toast.
 	m.toast = ""
